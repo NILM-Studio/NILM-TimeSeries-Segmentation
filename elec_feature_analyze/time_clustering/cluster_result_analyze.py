@@ -1,7 +1,7 @@
 import json
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+# import pandas as pd
 
 # ===============CONFIG=======================
 
@@ -68,5 +68,43 @@ def cluster_result_analyze(data_info_list, cluster_dict):
 
 
 if __name__ == '__main__':
-    data_info_list, cluster_dict = read_detsec_result()
-    cluster_result_analyze(data_info_list, cluster_dict)
+    # data_info_list, cluster_dict = read_detsec_result()
+    # cluster_result_analyze(data_info_list, cluster_dict)
+    import tensorflow as tf
+    #
+    # # 1. 关闭TF的CPU强制模式（如有）
+    # import os
+    #
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 强制只看第一个GPU
+    # os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+    #
+    # # 2. 重置GPU配置
+    # tf.config.list_physical_devices()  # 列出所有设备
+    #
+    # # 3. 手动检测GPU
+    # gpus = tf.config.list_physical_devices('GPU')
+    # print("=== 所有物理设备 ===")
+    # print(tf.config.list_physical_devices())
+    # print("=== GPU检测结果 ===")
+    # if gpus:
+    #     print(f"✅ 识别到GPU：{gpus}")
+    #     # 配置GPU内存增长
+    #     for gpu in gpus:
+    #         tf.config.experimental.set_memory_growth(gpu, True)
+    # else:
+    #     print("❌ 未识别到GPU")
+    #     # 打印TF的CUDA相关日志（排查原因）
+    #     print("=== TF CUDA状态 ===")
+    #     print(f"TF是否内置CUDA：{tf.test.is_built_with_cuda()}")
+    #     print(f"GPU是否可用：{tf.test.is_gpu_available(cuda_only=True)}")
+
+    # 1. 检测 GPU 是否可用（核心！返回 True/False）
+    gpu_available = tf.test.is_gpu_available(
+        cuda_only=True,  # 只检测 CUDA GPU（排除 OpenCL 等）
+        min_cuda_compute_capability=None  # 不限制 GPU 算力
+    )
+    print("GPU 是否可用：", gpu_available)
+
+    # 2. （可选）检测具体的 CUDA/cuDNN 版本
+    print("CUDA 版本：", tf.test.is_built_with_cuda())
+    # print("cuDNN 版本：", tf.test.is_built_with_cudnn())

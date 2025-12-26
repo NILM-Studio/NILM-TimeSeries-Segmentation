@@ -4,8 +4,8 @@ import pandas as pd
 import numpy as np
 
 # ===================== 1. 配置项（大写常量，统一管理） =====================
-ACTIVE_DIR = r"../../ukdale_disaggregate/active/washing_machine/"
-CPS_DIR = r"../../ukdale_disaggregate/cps/washing_machine/"
+ACTIVE_DIR = r"../../../source_code/claspy/scripts/data/washing_machine/"
+CPS_DIR = r"../../../source_code/claspy/scripts/cps/washing_machine/"
 APPLIANCE_NAME = "washing_machine"
 CSV_ENCODING = "utf-8"  # 若报编码错，可改为"gbk"或"utf-8-sig"
 
@@ -31,7 +31,7 @@ def match_active_with_cps():
         active_path = os.path.join(ACTIVE_DIR, active_filename)
 
         # 步骤2：匹配对应的CPS文件
-        cps_target_filename = f"Changepoints_{active_prefix}.csv"
+        cps_target_filename = f"segmentation_{active_prefix}.csv"
         cps_target_path = os.path.join(CPS_DIR, cps_target_filename)
 
         # 初始化当前active文件的匹配信息
@@ -50,7 +50,14 @@ def match_active_with_cps():
         if os.path.exists(cps_target_path):
             current_match["cps_file"] = cps_target_filename
             current_match["match_status"] = "Success"
-            current_match["cps"] = pd.read_csv(cps_target_path, encoding=CSV_ENCODING)
+            try:
+                current_match["cps"] = pd.read_csv(cps_target_path, encoding=CSV_ENCODING)
+            except Exception as e:
+                print(f"Error reading CPS file: {cps_target_path}")
+                print(f"Error details: {str(e)}")
+                current_match["cps"] = None
+        else:
+            continue
 
         # 步骤3：读取active文件为DataFrame（无论是否匹配到CPS文件都尝试读取）
         try:
@@ -206,18 +213,18 @@ if __name__ == "__main__":
     padded_array, lengths_array, mapping_list = save_file_for_DeTSEC()
 
     # 保存为.npy文件
-    np.save('cluster_data/data.npy', padded_array)
-    np.save('cluster_data/seq_length.npy', lengths_array)
+    np.save('cluster_data/washing_machine_fully/data.npy', padded_array)
+    np.save('cluster_data/washing_machine_fully/seq_length.npy', lengths_array)
     print("Arrays saved successfully!")
     print(f"Files saved: data.npy, seq_length.npy")
 
     # 创建cluster_data目录（如果不存在）
     os.makedirs("cluster_data", exist_ok=True)
-    
+
     # 保存mapping_list到JSON文件
-    with open("cluster_data/data_mapping_list.json", "w", encoding="utf-8") as f:
+    with open("cluster_data/washing_machine_fully/data_mapping_list.json", "w", encoding="utf-8") as f:
         json.dump(mapping_list, f, ensure_ascii=False, indent=4)
-    
+
     print("Mapping list saved to cluster_data/dict_list.json")
     print(f"Total entries in mapping list: {len(mapping_list)}")
 

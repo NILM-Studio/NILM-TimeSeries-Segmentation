@@ -5,7 +5,7 @@
       <excludeFolder url="file://$MODULE_DIR$/nilm_metadata/build" />
       <excludeFolder url="file://$MODULE_DIR$/nilm_metadata/nilm_metadata.egg-info" />
     </content>
-    <orderEntry type="jdk" jdkName="DeTSEC" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="sktime" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">

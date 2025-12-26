@@ -29,8 +29,11 @@ from sktime.detection.plotting.utils import (
 # scores = clasp.scores
 # print("The found change points are", found_cps.to_numpy())
 
-def clasp_nilm(ts: pd.DataFrame, period_size, n_cps: int):
-    clasp = ClaSPSegmentation(period_length=period_size, n_cps=n_cps)
+def clasp_nilm(ts: pd.DataFrame, period_size, n_cps: int = None):
+    if n_cps is None:
+        clasp = ClaSPSegmentation()
+    else:
+        clasp = ClaSPSegmentation(period_length=period_size, n_cps=n_cps)
     print("正在运行clasp...")
     found_cps = clasp.fit_predict(ts)
     profiles = clasp.profiles

@@ -1,4 +1,4 @@
-import os
+import os,re
 import traceback
 
 import matplotlib.pyplot as plt
@@ -7,9 +7,8 @@ from sktime.detection.clasp import find_dominant_window_sizes
 import clasp
 import fluss
 
-config = {
-    "window_size": 50,
-}
+WINDOW_SIZE = 20
+SHOW_SEG_RES = False
 
 
 def save_changepoint_info(df, cps, output_file):
@@ -42,7 +41,7 @@ def save_changepoint_info(df, cps, output_file):
     print(f"Saved {len(cps)} change-points to {output_file}")
 
 
-def visualize_csv_files(folder_path, output_folder):
+def visualize_and_seg_csv_files(folder_path, output_folder):
     """
     读取指定文件夹下的所有.csv文件为DataFrame并且逐个可视化
 
@@ -101,7 +100,7 @@ def visualize_csv_files(folder_path, output_folder):
                     return
                 elif user_input.lower() == 's':
                     print("跳过到下一个文件")
-                    break
+                    continue
                 else:
                     try:
                         n_regimes = int(user_input)
@@ -111,20 +110,23 @@ def visualize_csv_files(folder_path, output_folder):
                             print(f"调用clasp函数，n_regimes={n_regimes}")
                             window_size = find_dominant_window_sizes(ts)
                             if window_size is None:
-                                window_size = config["window_size"]
+                                window_size = WINDOW_SIZE
                                 print(f"Using default window size: {window_size}")
                             else:
                                 print("Dominant Period", window_size)
-                            ts, cps = clasp.clasp_nilm(ts, window_size, n_regimes)
+                            ts, cps = clasp.clasp_nilm(ts, 20, n_regimes)
                             pass
                             # ts, cps = fluss.clasp(ts, window_size=50, n_regimes=n_regimes, excl_factor=1)
                         elif alg == 'f':
                             print(f"调用fluss函数，n_regimes={n_regimes}")
-                            ts, cps = fluss.fluss(ts, window_size=config["window_size"], n_regimes=n_regimes,
+                            ts, cps = fluss.fluss(ts, window_size=WINDOW_SIZE, n_regimes=n_regimes,
                                                   excl_factor=1)
                         else:
                             raise ValueError("Invalid algorithm specified")
-                        save_changepoint_info(df, cps, output_file)
+                        if len(cps) == 0:
+                            print("No changepoints found")
+                        else:
+                            save_changepoint_info(df, cps, output_file)
                         break
                     except ValueError:
                         print("非法输入，请输入一个数字、'exit'或'skip'")
@@ -139,6 +141,7 @@ def visualize_csv_files(folder_path, output_folder):
     print("所有文件处理完成")
 
 
+
 if __name__ == '__main__':
     # time_series = pd.read_csv('../process_dataset/Air-condition/Air_condition.csv')
     # # 确保 'active power' 列是数值类型，非数值数据会被转换为 NaN
@@ -150,4 +153,7 @@ if __name__ == '__main__':
     # ts = ts['active power'].values  # 提取数值数组
     #
     # fluss.fluss(ts, window_size=300, n_regimes=10, excl_factor=1)
-    visualize_csv_files('../../ukdale_disaggregate/active/washing_machine', '../ukdale_disaggregate/cps/washing_machine')
+    visualize_and_seg_csv_files('../../ukdale_disaggregate/process_data/washing_machine_channel_5',
+                                '../../ukdale_disaggregate/cps/washing_machine')
+    # folder_path = "../../ukdale_disaggregate/process_data/washing_machine_channel_5/"
+    # rename_channel_files(folder_path, "channel_5", "Washing_Machine")

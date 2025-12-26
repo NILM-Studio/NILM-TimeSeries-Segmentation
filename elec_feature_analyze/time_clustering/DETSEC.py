@@ -23,9 +23,9 @@ from operator import itemgetter
 import random as rand
 from sklearn.cluster import KMeans
 
-GRU_NUINTS = 32  # GRU隐藏层维度（大数据集用512，小数据集建议32/64）
+GRU_NUINTS = 64  # GRU隐藏层维度（大数据集用512，小数据集建议32/64）
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # 禁用GPU
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # 禁用GPU
 
 
 def buildMaskBatch(batch_seql, max_size):
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     # n_clusters = int(sys.argv[3])
 
     # directory in which data file are stored
-    dirName = './'
+    dirName = './elec_feature_analyze/time_clustering/cluster_data/'
     # number of dimensions of the multivariate time series
     n_dims = 1
     # Num of clusters, commonly, equals to the number of classes on which the dataset is defined on
@@ -199,11 +199,11 @@ if __name__ == "__main__":
 
     output_dir = dirName.split("/")[-1]
     # DATA FILE with size:	(nSamples, (n_dims * max_length) )
-    dataFileName = dirName + "/cluster_data/data.npy"
+    dataFileName = dirName + "data.npy"
     # SEQUENCE LENGTH FILE with size: ( nSamples, )
     # It contains the sequence length (multiplied by n_dims) for each sequence with positional reference to the data.npy file
     # This means that, if a time series has 4 attributes and it has a lenght equal to 20, the corresponding values in the seq_length.npy file will be 80
-    seqLFileName = dirName + "/cluster_data/seq_length.npy"
+    seqLFileName = dirName + "seq_length.npy"
 
     data = np.load(dataFileName)
     # 新增：移除最后一个大小为1的维度（若存在）
