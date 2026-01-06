@@ -2,7 +2,12 @@ import numpy as np
 from sklearn.base import BaseEstimator, ClusterMixin
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
+from sklearn.cluster import DBSCAN
+from fastdtw import fastdtw
+from cluster_result_analyze import cluster_result_save
+from sklearn.preprocessing import MinMaxScaler
 
+BASE_DIR = r'./cluster_data/washing_machine_seg/'
 
 # def dbscan_dtw_tslearn(ts_data):
 #     """
@@ -38,7 +43,7 @@ from scipy.spatial.distance import cdist
 #             print(f"时间序列 {idx}：聚类 {label}")
 
 
-def dtw_distance(x, y, normalize=True):
+def dtw_distance(x, y, normalize=True, window=None):
     """
     计算两个时间序列之间的DTW距离（增加归一化和对角线限制优化）
 
@@ -58,7 +63,8 @@ def dtw_distance(x, y, normalize=True):
     max_len = max(n, m)
 
     # 初始化距离矩阵（增加对角线限制，仅计算带宽内的元素，优化性能）
-    window = max(n, m) // 10  # 带宽为序列最大长度的10%
+    if window is None:
+        window = max(n, m) // 10  # 带宽为序列最大长度的10%
     dtw_matrix = np.full((n + 1, m + 1), np.inf)
     dtw_matrix[0, 0] = 0
 
@@ -223,7 +229,7 @@ class DBSCAN_DTW(BaseEstimator, ClusterMixin):
         return self.labels_
 
 
-def visualize_clusters(time_series_list, labels, title="DBSCAN-DTW Clustering Results"):
+def visualize_clusters(time_series_list, labels, eps, min_pts, save_file=None, title="DBSCAN-DTW Clustering Results"):
     """
     可视化聚类结果（优化鲁棒性和可读性）
 
@@ -264,7 +270,7 @@ def visualize_clusters(time_series_list, labels, title="DBSCAN-DTW Clustering Re
         cluster_indices = np.where(labels == cluster_id)[0]
         for seq_idx in cluster_indices:
             plt.plot(time_series_list[seq_idx].flatten(), alpha=0.7, label=f'Series {seq_idx}')
-        plt.title(f'Cluster {cluster_id} (n={len(cluster_indices)})')
+        plt.title(f'Cluster {cluster_id} (n={len(cluster_indices)}) with eps={eps}, min_pts={min_pts}')
         plt.ylabel('Value')
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(alpha=0.3)
@@ -282,56 +288,140 @@ def visualize_clusters(time_series_list, labels, title="DBSCAN-DTW Clustering Re
 
     plt.tight_layout()
     plt.show()
+    if save_file is not None:
+        plt.savefig(save_file)
 
 
 # 示例用法
 if __name__ == "__main__":
-    np.random.seed(42)
-
-    # 生成示例数据：不同长度的时间序列
+    data_np = np.load(BASE_DIR+'data.npy')
+    print(f"loading data successfully, data size is {data_np.shape}")
+    if data_np.size == 0:
+        print("警告: data.npy 是空文件")
+        exit()
+    data = data_np[:, :, 0]
+    seq_len = np.load(BASE_DIR+'seq_length.npy')
     time_series_data = []
+    normalized_ts_list = []
 
-    # 类别1：正弦波
-    for i in range(5):
-        length = np.random.randint(50, 100)
-        t = np.linspace(0, 4 * np.pi, length)
-        series = np.sin(t) + 0.1 * np.random.randn(length)
-        time_series_data.append(series)
+    # 遍历data每一行，将i行的前seq_len[i]个数提取出来作为序列append到data_list中
+    for i in range(len(data) - 6500):
+        if seq_len[i] == 0:
+            continue
+        sequence = data[i][:seq_len[i]]  # 提取第i行的前seq_len[i]个数
+        time_series_data.append(sequence)
 
-    # 类别2：余弦波
-    for i in range(5):
-        length = np.random.randint(50, 100)
-        t = np.linspace(0, 4 * np.pi, length)
-        series = np.cos(t) + 0.1 * np.random.randn(length)
-        time_series_data.append(series)
+        # 对当前序列进行归一化处理
+        min_max_scaler = MinMaxScaler()
+        # 将序列reshape为(n, 1)格式以适应MinMaxScaler
+        sequence_reshaped = sequence.reshape(-1, 1)
+        normalized_sequence = min_max_scaler.fit_transform(sequence_reshaped).flatten()
+        normalized_ts_list.append(normalized_sequence)
 
-    # 类别3：线性趋势
-    for i in range(3):
-        length = np.random.randint(50, 100)
-        t = np.linspace(0, 10, length)
-        series = t + 0.1 * np.random.randn(length)
-        time_series_data.append(series)
+    # np.random.seed(42)
+    #
+    # # 生成示例数据：不同长度的时间序列
+    # time_series_data = []
+    #
+    # # 类别1：正弦波
+    # for i in range(5):
+    #     length = np.random.randint(50, 100)
+    #     t = np.linspace(0, 4 * np.pi, length)
+    #     series = np.sin(t) + 0.1 * np.random.randn(length)
+    #     time_series_data.append(series)
+    #
+    # # 类别2：余弦波
+    # for i in range(5):
+    #     length = np.random.randint(50, 100)
+    #     t = np.linspace(0, 4 * np.pi, length)
+    #     series = np.cos(t) + 0.1 * np.random.randn(length)
+    #     time_series_data.append(series)
+    #
+    # # 类别3：线性趋势
+    # for i in range(3):
+    #     length = np.random.randint(50, 100)
+    #     t = np.linspace(0, 10, length)
+    #     series = t + 0.1 * np.random.randn(length)
+    #     time_series_data.append(series)
+    #
+    # # 添加一些噪声点
+    # for i in range(2):
+    #     length = np.random.randint(30, 80)
+    #     series = np.random.randn(length) * 0.5
+    #     time_series_data.append(series)
+    #
+    # # 应用DBSCAN-DTW聚类（调整eps为归一化后的值）
+    # dbscan_dtw = DBSCAN_DTW(eps=0.5, min_samples=3)
+    # labels = dbscan_dtw.fit_predict(data_list)
+    #
+    # # 输出结果
+    # print("DBSCAN-DTW Clustering Results:")
+    # print(f"Number of clusters: {dbscan_dtw.n_clusters_}")
+    # print(f"Number of noise points: {np.sum(labels == -1)}")
+    #
+    # for i, label in enumerate(labels):
+    #     if label == -1:
+    #         print(f"Time Series {i}: Noise Point")
+    #     else:
+    #         print(f"Time Series {i}: Cluster {label}")
 
-    # 添加一些噪声点
-    for i in range(2):
-        length = np.random.randint(30, 80)
-        series = np.random.randn(length) * 0.5
-        time_series_data.append(series)
+    # ----------------------
+    # 1. 修复：自定义兼容标量的欧氏距离函数（解决ValueError）
+    def scalar_euclidean(a, b):
+        a = np.array(a)
+        b = np.array(b)
+        return np.linalg.norm(a - b)
 
-    # 应用DBSCAN-DTW聚类（调整eps为归一化后的值）
-    dbscan_dtw = DBSCAN_DTW(eps=0.15, min_samples=3)
-    labels = dbscan_dtw.fit_predict(time_series_data)
 
-    # 输出结果
-    print("DBSCAN-DTW Clustering Results:")
-    print(f"Number of clusters: {dbscan_dtw.n_clusters_}")
-    print(f"Number of noise points: {np.sum(labels == -1)}")
+    # 3. 手动计算DTW距离矩阵
+    print("Start Compute DTW Distance Matrix")
+    n = len(normalized_ts_list)
+    distance_matrix = np.zeros((n, n))
 
-    for i, label in enumerate(labels):
-        if label == -1:
-            print(f"Time Series {i}: Noise Point")
-        else:
-            print(f"Time Series {i}: Cluster {label}")
+    # 计算总需要计算的配对数（上三角矩阵）
+    total_pairs = n * (n - 1) // 2
+    processed_pairs = 0
 
+    for i in range(n):
+        for j in range(i + 1, n):
+            # 使用自定义距离函数，避免报错
+            dist, _ = fastdtw(normalized_ts_list[i], normalized_ts_list[j], dist=scalar_euclidean)
+            distance_matrix[i, j] = dist
+            distance_matrix[j, i] = dist  # 距离矩阵对称
+
+            # 更新进度
+            processed_pairs += 1
+            if processed_pairs % 100 == 0 or processed_pairs == total_pairs:  # 每100个或完成时打印一次
+                progress_percent = (processed_pairs / total_pairs) * 100
+                print(f"Computing DTW distance matrix: {progress_percent:.2f}% ({processed_pairs}/{total_pairs})")
+
+    print("DTW distance matrix computed complete!!")
+
+    # 4. DBSCAN聚类
+    eps = 12
+    min_pts = 2
+    dbscan = DBSCAN(
+        eps=eps,  # 对应DTW距离的实际数值范围（需观察矩阵调整）
+        min_samples=min_pts,
+        metric="precomputed"
+    )
+    print("DBSCAN clustering started...")
+    labels = dbscan.fit_predict(distance_matrix)
+
+    # 5. 输出结果
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = np.sum(labels == -1)
+    print(f"聚类数量:{n_clusters}")
+    print(f"噪声点数量:{n_noise}")
+    print(f"样本标签:\n{labels}")
+
+    appliance_name = BASE_DIR.split('/')[2]
     # 可视化结果
-    visualize_clusters(time_series_data, labels)
+    visualize_clusters(normalized_ts_list, labels, eps, min_pts,
+                       save_file=f'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/dbscan_result_{eps}_{min_pts}.png')
+
+    np.save(BASE_DIR+f'dbscan_result_{eps}_{min_pts}.npy', labels)
+
+    cluster_result_save(normalized_ts_list, seq_len, labels,
+                        save_dir=rf'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/')
+    print("ALL DONE")

@@ -4,10 +4,13 @@ import pandas as pd
 import numpy as np
 
 # ===================== 1. 配置项（大写常量，统一管理） =====================
-ACTIVE_DIR = r"../../../source_code/claspy/scripts/data/washing_machine/"
-CPS_DIR = r"../../../source_code/claspy/scripts/cps/washing_machine/"
+ACTIVE_DIR = r"D:\KnowledgeDatabase\ComputerSecience\PROJ_NILM\source_code\DL_mapping\label-studio-test\washing_machine_all\data"
+CPS_DIR = r"D:\KnowledgeDatabase\ComputerSecience\PROJ_NILM\source_code\DL_mapping\label-studio-test" \
+          r"\washing_machine_all\output"
+OUTPUT_DIR = r"./cluster_data/washing_machine_manually/"
 APPLIANCE_NAME = "washing_machine"
 CSV_ENCODING = "utf-8"  # 若报编码错，可改为"gbk"或"utf-8-sig"
+SAVE_NON_MATCH_FILE = True
 
 
 # ===================== 2. 核心函数：以active文件为核心匹配+读取 =====================
@@ -31,7 +34,7 @@ def match_active_with_cps():
         active_path = os.path.join(ACTIVE_DIR, active_filename)
 
         # 步骤2：匹配对应的CPS文件
-        cps_target_filename = f"segmentation_{active_prefix}.csv"
+        cps_target_filename = f"Changepoints_{active_prefix}.csv"
         cps_target_path = os.path.join(CPS_DIR, cps_target_filename)
 
         # 初始化当前active文件的匹配信息
@@ -113,8 +116,11 @@ def cutting_data_by_cps():
                 # 根据timestamp列筛选数据
                 mask = (data['timestamp'] >= start_time) & (data['timestamp'] < end_time)
                 cut_data = data[mask]
-
+                if len(cut_data) < 10:
+                    print(f"Warning: Cutting data segment {i + 1} is too short, less than 10 records")
+                    continue
                 print(f"Cutting data segment {i + 1}: from {start_time} to {end_time}, got {len(cut_data)} records")
+
                 res["cut_data"].append(cut_data)
                 cut_res = {
                     "data_file": res["data_file"],
@@ -125,26 +131,33 @@ def cutting_data_by_cps():
                 }
                 cut_data_list.append(cut_res)
         else:
-            print(f"No CPS file found for {res['data_file']}, output origin data directly")
-            data = res["data"]
-            cut_res = {
-                "data_file": res["data_file"],
-                "appliance": APPLIANCE_NAME,
-                "start_timestamp": data['timestamp'].iloc[0].item(),
-                "end_timestamp": data['timestamp'].iloc[-1].item(),
-                "data": data
-            }
-            res["cut_data"].append(data)
-            cut_data_list.append(cut_res)
+            if SAVE_NON_MATCH_FILE:
+                print(f"No CPS file found for {res['data_file']}, output origin data directly")
+                data = res["data"]
+                cut_res = {
+                    "data_file": res["data_file"],
+                    "appliance": APPLIANCE_NAME,
+                    "start_timestamp": data['timestamp'].iloc[0].item(),
+                    "end_timestamp": data['timestamp'].iloc[-1].item(),
+                    "data": data
+                }
+                res["cut_data"].append(data)
+                cut_data_list.append(cut_res)
+            else:
+                print(f"No CPS file found for {res['data_file']}, SKIP")
+                continue
 
     return cut_data_list, match_results
 
 
-def save_file_for_DeTSEC():
+def save_file_for_cluster():
     """
     将切割后的数据展平并填充为相同长度，存储为numpy数组格式以便后续处理
     :returns
-    padded_array: 完成展平后的数据，维度为(n, max_len, 1)
+    padded_array: 完成展平后的数据，维度为(n, max_len, 1) 或 (n, max_len, 3)
+                 当存在cluster_label列时为(n, max_len, 3)，其中：
+                 [:, :, 0]为power_new，[:, :, 1]为power，[:, :, 2]为cluster_label
+                 否则为(n, max_len, 1)，其中[:, :, 0]为power
     lengths_array: 每个samples的长度，(n, 1)
     """
     cut_data_list, match_results = cutting_data_by_cps()
@@ -159,35 +172,63 @@ def save_file_for_DeTSEC():
         if len(df) > max_len:
             max_len = len(df)
 
-    # 第二步：创建形状为(n, max_len, 1)的numpy数组
+    # 检查是否存在cluster_label列
+    has_cluster_label = any('cluster_label' in df.columns for df in ts_list)
+
+    # 第二步：根据是否存在cluster_label列创建不同形状的numpy数组
     n = len(ts_list)
-    padded_array = np.zeros((n, max_len, 1))
+    if has_cluster_label:
+        padded_array = np.zeros((n, max_len, 3))  # 3个特征：power, power_new, cluster_label
+    else:
+        padded_array = np.zeros((n, max_len, 1))  # 1个特征：power
 
     # 创建用于记录每个df实际数据长度的数组
     lengths_array = np.zeros(n, dtype=int)
 
     # 第三步：对每个DataFrame进行展平和填充操作
     for i, df in enumerate(ts_list):
-        # 假设我们使用active_power列进行展平（根据实际列名调整）
-        if 'power' in df.columns:
-            flat_data = df['power'].values.reshape(-1, 1)
-        else:
-            # 如果没有指定列，则使用第一列数值数据
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            if len(numeric_cols) > 0:
-                flat_data = df[numeric_cols[0]].values.reshape(-1, 1)
+        if has_cluster_label:
+            # 处理3维数组：power, power_new, cluster_label
+            # 提取power列
+            power_data = df['power'].values
+
+            # 提取power_new列（假设存在名为power_new或类似名称的列）
+            if 'power_new' in df.columns:
+                power_new_data = df['power_new'].values
             else:
-                # 如果没有数值列，则用索引填充
-                flat_data = np.arange(len(df)).reshape(-1, 1)
+                power_new_data = power_data  # 如果没有power_new列，复制power列
 
-        # 记录当前df的实际长度
-        current_len = len(flat_data)
-        lengths_array[i] = current_len
+            # 提取cluster_label列
+            if 'cluster_label' in df.columns:
+                cluster_label_data = df['cluster_label'].values
+            else:
+                # 如果没有cluster_label列，用0填充
+                cluster_label_data = np.zeros(len(df))
 
-        # 填充到max_len长度
-        padded_array[i, :current_len, :] = flat_data[:current_len]
+            # 记录当前df的实际长度，剔除长度太短的
+            current_len = min(len(power_data), len(power_new_data), len(cluster_label_data))
+            lengths_array[i] = current_len
+            if current_len < 10:
+                continue
 
-        print(f"Processing segment {i + 1}/{n}: original length={current_len}, padded to {max_len}")
+            # 填充到max_len长度
+            padded_array[i, :current_len, 0] = power_new_data[:current_len]  # power_new
+            padded_array[i, :current_len, 1] = power_data[:current_len]  # power
+            padded_array[i, :current_len, 2] = cluster_label_data[:current_len]  # cluster_label
+
+        else:
+            # 处理1维数组：仅power列
+            flat_data = df['power'].values
+
+            # 记录当前df的实际长度
+            current_len = len(flat_data)
+            lengths_array[i] = current_len
+
+            # 填充到max_len长度
+            padded_array[i, :current_len, 0] = flat_data[:current_len]
+
+        print(
+            f"Processing segment {i + 1}/{n}: original length={current_len}, padded to {max_len}, has_cluster_label={has_cluster_label}")
 
     # 输出最终结果的维度信息
     print(f"\n{'=' * 50}")
@@ -196,6 +237,7 @@ def save_file_for_DeTSEC():
     print(f"Lengths array shape: {lengths_array.shape} (n_samples,)")
     print(f"Max sequence length: {max_len}")
     print(f"Total samples: {n}")
+    print(f"Has cluster_label column: {has_cluster_label}")
     print(f"{'=' * 50}")
 
     return padded_array, lengths_array, cut_data_list
@@ -210,11 +252,11 @@ if __name__ == "__main__":
         print(f"❌ Error: CPS directory not exist → {CPS_DIR}")
         exit(1)
 
-    padded_array, lengths_array, mapping_list = save_file_for_DeTSEC()
+    padded_array, lengths_array, mapping_list = save_file_for_cluster()
 
     # 保存为.npy文件
-    np.save('cluster_data/washing_machine_fully/data.npy', padded_array)
-    np.save('cluster_data/washing_machine_fully/seq_length.npy', lengths_array)
+    np.save(OUTPUT_DIR+'data.npy', padded_array)
+    np.save(OUTPUT_DIR+'seq_length.npy', lengths_array)
     print("Arrays saved successfully!")
     print(f"Files saved: data.npy, seq_length.npy")
 
@@ -222,9 +264,9 @@ if __name__ == "__main__":
     os.makedirs("cluster_data", exist_ok=True)
 
     # 保存mapping_list到JSON文件
-    with open("cluster_data/washing_machine_fully/data_mapping_list.json", "w", encoding="utf-8") as f:
+    with open(OUTPUT_DIR + "data_mapping_list.json", "w", encoding="utf-8") as f:
         json.dump(mapping_list, f, ensure_ascii=False, indent=4)
 
-    print("Mapping list saved to cluster_data/dict_list.json")
+    print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list.json")
     print(f"Total entries in mapping list: {len(mapping_list)}")
 

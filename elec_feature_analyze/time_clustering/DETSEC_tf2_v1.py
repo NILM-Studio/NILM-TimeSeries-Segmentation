@@ -177,11 +177,14 @@ def AE3(x, b_size, n_dim, seqL, mask, toReuse):
         return reconstruct, reconstruct2, encoder
 
 
-
 # 命令行参数处理
-dirName = sys.argv[1]
-n_dims = int(sys.argv[2])
-n_clusters = int(sys.argv[3])
+# dirName = sys.argv[1]
+# n_dims = int(sys.argv[2])
+# n_clusters = int(sys.argv[3])
+
+dirName = r'./cluster_data'
+n_dims = 1
+n_clusters = 5
 
 output_dir = dirName.split("/")[-1]
 dataFileName = dirName + "/data.npy"
