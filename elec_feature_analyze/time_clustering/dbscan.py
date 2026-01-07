@@ -6,227 +6,15 @@ from sklearn.cluster import DBSCAN
 from fastdtw import fastdtw
 from cluster_result_analyze import cluster_result_save
 from sklearn.preprocessing import MinMaxScaler
+import sys
+import time
+
+# 启用无缓冲输出，确保打印立即显示在日志中
+sys.stdout.flush()
+sys.stderr.flush()
 
 BASE_DIR = r'./cluster_data/washing_machine_seg/'
 
-# def dbscan_dtw_tslearn(ts_data):
-#     """
-#     tslearn库的dbscan_dtw方法
-#     :return:
-#     """
-#     # ===================== 2. 数据预处理 =====================
-#     ts_dataset = to_time_series_dataset(ts_data)
-#     scaler = TimeSeriesScalerMeanVariance()
-#     ts_dataset_scaled = scaler.fit_transform(ts_dataset)
-#
-#     # ===================== 3. 正确调用TimeSeriesDBSCAN =====================
-#     dbscan_dtw = TimeSeriesDBSCAN(
-#         eps=0.3,  # DTW距离阈值（标准化后）
-#         min_samples=3,  # 核心点最小样本数
-#         metric="dtw",  # 指定DTW距离
-#         n_jobs=-1  # 多线程加速
-#     )
-#     labels = dbscan_dtw.fit_predict(ts_dataset_scaled)
-#
-#     # ===================== 4. 结果输出 =====================
-#     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-#     n_noise = np.sum(labels == -1)
-#
-#     print("DBSCAN-DTW 聚类结果（tslearn官方类）：")
-#     print(f"聚类数量：{n_clusters}")
-#     print(f"噪声点数量：{n_noise}")
-#     print("-" * 50)
-#     for idx, label in enumerate(labels):
-#         if label == -1:
-#             print(f"时间序列 {idx}：噪声点")
-#         else:
-#             print(f"时间序列 {idx}：聚类 {label}")
-
-
-def dtw_distance(x, y, normalize=True, window=None):
-    """
-    计算两个时间序列之间的DTW距离（增加归一化和对角线限制优化）
-
-    Parameters:
-    x, y: array-like, shape (n_samples, )
-        时间序列数据
-    normalize: bool, default=True
-        是否归一化DTW距离（除以序列总长度）
-
-    Returns:
-    float: 归一化/非归一化的DTW距离
-    """
-    x = np.array(x).flatten()
-    y = np.array(y).flatten()
-
-    n, m = len(x), len(y)
-    max_len = max(n, m)
-
-    # 初始化距离矩阵（增加对角线限制，仅计算带宽内的元素，优化性能）
-    if window is None:
-        window = max(n, m) // 10  # 带宽为序列最大长度的10%
-    dtw_matrix = np.full((n + 1, m + 1), np.inf)
-    dtw_matrix[0, 0] = 0
-
-    # 填充距离矩阵（仅在带宽内计算）
-    for i in range(1, n + 1):
-        # 限制j的范围，仅计算对角线附近的元素
-        start_j = max(1, i - window)
-        end_j = min(m + 1, i + window)
-        for j in range(start_j, end_j):
-            cost = abs(x[i - 1] - y[j - 1])
-            dtw_matrix[i, j] = cost + min(
-                dtw_matrix[i - 1, j],  # 插入
-                dtw_matrix[i, j - 1],  # 删除
-                dtw_matrix[i - 1, j - 1]  # 匹配
-            )
-
-    dtw_dist = dtw_matrix[n, m]
-    # 归一化：消除序列长度对距离的影响
-    if normalize:
-        dtw_dist = dtw_dist / max_len
-
-    return dtw_dist
-
-
-def compute_distance_matrix(time_series_list, normalize=True):
-    """
-    计算时间序列列表之间的DTW距离矩阵（优化循环效率）
-
-    Parameters:
-    time_series_list: list of array-like
-        时间序列列表，每个序列形状为(len, )
-    normalize: bool, default=True
-        是否归一化DTW距离
-
-    Returns:
-    np.ndarray: 距离矩阵
-    """
-    n = len(time_series_list)
-    distance_matrix = np.zeros((n, n))
-
-    # 优化：仅计算上三角矩阵，避免重复计算
-    for i in range(n):
-        x = time_series_list[i]
-        for j in range(i + 1, n):
-            y = time_series_list[j]
-            dist = dtw_distance(x, y, normalize=normalize)
-            distance_matrix[i, j] = dist
-            distance_matrix[j, i] = dist
-
-    return distance_matrix
-
-
-class DBSCAN_DTW(BaseEstimator, ClusterMixin):
-    """
-    基于DTW距离的DBSCAN聚类算法（修复BFS逻辑，增加边界处理）
-    """
-
-    def __init__(self, eps=0.5, min_samples=3):
-        """
-        初始化参数
-
-        Parameters:
-        eps: float, default=0.5
-            邻域半径（归一化后DTW距离的阈值）
-        min_samples: int, default=3
-            核心点的最小样本数
-        """
-        self.eps = eps
-        self.min_samples = min_samples
-        self.labels_ = None
-        self.n_clusters_ = 0
-        self.distance_matrix_ = None
-
-    def fit(self, X):
-        """
-        对时间序列进行DBSCAN聚类（修复BFS逻辑）
-
-        Parameters:
-        X: list of array-like
-            时间序列列表，每个序列形状为(len, )
-
-        Returns:
-        self: object
-        """
-        # 边界处理：空输入
-        if not X:
-            self.labels_ = np.array([])
-            self.n_clusters_ = 0
-            return self
-
-        self.time_series_ = [np.array(ts).flatten() for ts in X]  # 统一格式
-        self.n_samples_ = len(self.time_series_)
-
-        # 计算归一化的距离矩阵
-        self.distance_matrix_ = compute_distance_matrix(self.time_series_, normalize=True)
-
-        # 初始化标签数组 (-1表示噪声点，-2表示未访问)
-        self.labels_ = np.full(self.n_samples_, -2, dtype=int)
-        cluster_label = 0
-
-        # 遍历所有样本
-        for i in range(self.n_samples_):
-            if self.labels_[i] != -2:  # 已访问，跳过
-                continue
-
-            # 找到邻域内的点
-            neighbors = self._get_neighbors(i)
-
-            # 非核心点：标记为噪声
-            if len(neighbors) < self.min_samples:
-                self.labels_[i] = -1
-                continue
-
-            # 核心点：启动BFS，扩展聚类
-            self._expand_cluster(i, neighbors, cluster_label)
-            cluster_label += 1
-
-        self.n_clusters_ = cluster_label
-        return self
-
-    def _get_neighbors(self, point_idx):
-        """
-        获取指定点eps邻域内的所有点
-        """
-        neighbors = []
-        for i in range(self.n_samples_):
-            if self.distance_matrix_[point_idx, i] <= self.eps:
-                neighbors.append(i)
-        return neighbors
-
-    def _expand_cluster(self, core_idx, neighbors, cluster_label):
-        """
-        扩展聚类（修复BFS逻辑，过滤已处理点）
-        """
-        # 初始化队列：仅包含未访问/噪声的邻域点
-        queue = [p for p in neighbors if self.labels_[p] in (-1, -2)]
-        # 标记核心点为当前聚类
-        self.labels_[core_idx] = cluster_label
-
-        while queue:
-            current_point = queue.pop(0)  # BFS：队列（FIFO），原代码用pop()是DFS，错误！
-
-            # 未访问的点：标记为当前聚类，然后检查是否是核心点
-            if self.labels_[current_point] == -2:
-                self.labels_[current_point] = cluster_label
-                current_neighbors = self._get_neighbors(current_point)
-                # 核心点：将其邻域的未处理点加入队列
-                if len(current_neighbors) >= self.min_samples:
-                    new_points = [p for p in current_neighbors if self.labels_[p] in (-1, -2)]
-                    queue.extend(new_points)
-            # 噪声点：归入当前聚类
-            elif self.labels_[current_point] == -1:
-                self.labels_[current_point] = cluster_label
-
-    def fit_predict(self, X):
-        """
-        训练模型并返回聚类标签
-        :parameter
-        X: List对象，成员为(len, 1)的numpy数组
-        """
-        self.fit(X)
-        return self.labels_
 
 
 def visualize_clusters(time_series_list, labels, eps, min_pts, save_file=None, title="DBSCAN-DTW Clustering Results"):
@@ -294,18 +82,43 @@ def visualize_clusters(time_series_list, labels, eps, min_pts, save_file=None, t
 
 # 示例用法
 if __name__ == "__main__":
-    data_np = np.load(BASE_DIR+'data.npy')
-    print(f"loading data successfully, data size is {data_np.shape}")
+    # 打印当前配置信息，确保立即输出
+    print("=" * 60)
+    print("DBSCAN Time Series Clustering")
+    print("=" * 60)
+    sys.stdout.flush()
+    
+    # 数据源信息
+    data_path = BASE_DIR + 'data.npy'
+    seq_len_path = BASE_DIR + 'seq_length.npy'
+    print(f"\n【数据源配置】")
+    print(f"BASE_DIR: {BASE_DIR}")
+    print(f"数据文件路径: {data_path}")
+    print(f"序列长度文件路径: {seq_len_path}")
+    sys.stdout.flush()
+    
+    # 加载数据
+    data_np = np.load(data_path)
+    print(f"\n【数据加载】")
+    print(f"加载数据成功，数据大小: {data_np.shape}")
+    sys.stdout.flush()
+    
     if data_np.size == 0:
         print("警告: data.npy 是空文件")
+        sys.stdout.flush()
         exit()
     data = data_np[:, :, 0]
-    seq_len = np.load(BASE_DIR+'seq_length.npy')
+    seq_len = np.load(seq_len_path)
     time_series_data = []
     normalized_ts_list = []
 
     # 遍历data每一行，将i行的前seq_len[i]个数提取出来作为序列append到data_list中
-    for i in range(len(data) - 6500):
+    print(f"\n【数据预处理】")
+    print(f"原始数据行数量: {len(data)}")
+    print(f"序列长度数组大小: {len(seq_len)}")
+    sys.stdout.flush()
+    
+    for i in range(len(data)-5000):
         if seq_len[i] == 0:
             continue
         sequence = data[i][:seq_len[i]]  # 提取第i行的前seq_len[i]个数
@@ -317,55 +130,10 @@ if __name__ == "__main__":
         sequence_reshaped = sequence.reshape(-1, 1)
         normalized_sequence = min_max_scaler.fit_transform(sequence_reshaped).flatten()
         normalized_ts_list.append(normalized_sequence)
+    
+    print(f"处理完成，有效序列数量: {len(normalized_ts_list)}")
+    sys.stdout.flush()
 
-    # np.random.seed(42)
-    #
-    # # 生成示例数据：不同长度的时间序列
-    # time_series_data = []
-    #
-    # # 类别1：正弦波
-    # for i in range(5):
-    #     length = np.random.randint(50, 100)
-    #     t = np.linspace(0, 4 * np.pi, length)
-    #     series = np.sin(t) + 0.1 * np.random.randn(length)
-    #     time_series_data.append(series)
-    #
-    # # 类别2：余弦波
-    # for i in range(5):
-    #     length = np.random.randint(50, 100)
-    #     t = np.linspace(0, 4 * np.pi, length)
-    #     series = np.cos(t) + 0.1 * np.random.randn(length)
-    #     time_series_data.append(series)
-    #
-    # # 类别3：线性趋势
-    # for i in range(3):
-    #     length = np.random.randint(50, 100)
-    #     t = np.linspace(0, 10, length)
-    #     series = t + 0.1 * np.random.randn(length)
-    #     time_series_data.append(series)
-    #
-    # # 添加一些噪声点
-    # for i in range(2):
-    #     length = np.random.randint(30, 80)
-    #     series = np.random.randn(length) * 0.5
-    #     time_series_data.append(series)
-    #
-    # # 应用DBSCAN-DTW聚类（调整eps为归一化后的值）
-    # dbscan_dtw = DBSCAN_DTW(eps=0.5, min_samples=3)
-    # labels = dbscan_dtw.fit_predict(data_list)
-    #
-    # # 输出结果
-    # print("DBSCAN-DTW Clustering Results:")
-    # print(f"Number of clusters: {dbscan_dtw.n_clusters_}")
-    # print(f"Number of noise points: {np.sum(labels == -1)}")
-    #
-    # for i, label in enumerate(labels):
-    #     if label == -1:
-    #         print(f"Time Series {i}: Noise Point")
-    #     else:
-    #         print(f"Time Series {i}: Cluster {label}")
-
-    # ----------------------
     # 1. 修复：自定义兼容标量的欧氏距离函数（解决ValueError）
     def scalar_euclidean(a, b):
         a = np.array(a)
@@ -374,14 +142,21 @@ if __name__ == "__main__":
 
 
     # 3. 手动计算DTW距离矩阵
-    print("Start Compute DTW Distance Matrix")
+    print(f"\n【DTW距离矩阵计算】")
     n = len(normalized_ts_list)
     distance_matrix = np.zeros((n, n))
 
     # 计算总需要计算的配对数（上三角矩阵）
     total_pairs = n * (n - 1) // 2
     processed_pairs = 0
+    print(f"序列数量: {n}")
+    print(f"需要计算的距离对数量: {total_pairs}")
+    print(f"预计计算时间: 约 {total_pairs * 0.01:.2f} 秒")
+    sys.stdout.flush()
 
+    # 性能优化：添加时间监控
+    start_time = time.time()
+    
     for i in range(n):
         for j in range(i + 1, n):
             # 使用自定义距离函数，避免报错
@@ -393,35 +168,73 @@ if __name__ == "__main__":
             processed_pairs += 1
             if processed_pairs % 100 == 0 or processed_pairs == total_pairs:  # 每100个或完成时打印一次
                 progress_percent = (processed_pairs / total_pairs) * 100
-                print(f"Computing DTW distance matrix: {progress_percent:.2f}% ({processed_pairs}/{total_pairs})")
+                elapsed_time = time.time() - start_time
+                print(f"  进度: {progress_percent:.2f}% ({processed_pairs}/{total_pairs}) - 耗时: {elapsed_time:.2f}秒")
+                sys.stdout.flush()
 
-    print("DTW distance matrix computed complete!!")
+    print("DTW距离矩阵计算完成！")
+    print(f"距离矩阵大小: {distance_matrix.shape}")
+    print(f"总耗时: {time.time() - start_time:.2f}秒")
+    sys.stdout.flush()
 
     # 4. DBSCAN聚类
+    print(f"\n【DBSCAN聚类】")
     eps = 12
     min_pts = 2
+    print(f"聚类参数: eps={eps}, min_samples={min_pts}")
+    sys.stdout.flush()
+    
     dbscan = DBSCAN(
         eps=eps,  # 对应DTW距离的实际数值范围（需观察矩阵调整）
         min_samples=min_pts,
         metric="precomputed"
     )
-    print("DBSCAN clustering started...")
+    print("开始DBSCAN聚类...")
+    sys.stdout.flush()
     labels = dbscan.fit_predict(distance_matrix)
 
     # 5. 输出结果
+    print(f"\n【聚类结果】")
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise = np.sum(labels == -1)
-    print(f"聚类数量:{n_clusters}")
-    print(f"噪声点数量:{n_noise}")
-    print(f"样本标签:\n{labels}")
+    print(f"聚类数量: {n_clusters}")
+    print(f"噪声点数量: {n_noise}")
+    print(f"各类别样本数分布:")
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    for label, count in zip(unique_labels, counts):
+        label_name = "噪声点" if label == -1 else f"聚类 {label}"
+        print(f"  {label_name}: {count} 个样本")
+    sys.stdout.flush()
 
+    # 输出文件配置
     appliance_name = BASE_DIR.split('/')[2]
+    result_save_path = BASE_DIR + f'dbscan_result_{eps}_{min_pts}.npy'
+    visualize_save_path = f'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/dbscan_result_{eps}_{min_pts}.png'
+    cluster_result_dir = rf'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/'
+    
+    print(f"\n【结果输出】")
+    print(f"设备名称: {appliance_name}")
+    print(f"结果保存路径: {result_save_path}")
+    print(f"可视化结果路径: {visualize_save_path}")
+    print(f"聚类结果分析目录: {cluster_result_dir}")
+    sys.stdout.flush()
+    
     # 可视化结果
-    visualize_clusters(normalized_ts_list, labels, eps, min_pts,
-                       save_file=f'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/dbscan_result_{eps}_{min_pts}.png')
+    visualize_clusters(normalized_ts_list, labels, eps, min_pts, save_file=visualize_save_path)
+    print(f"可视化结果已保存到: {visualize_save_path}")
+    sys.stdout.flush()
 
-    np.save(BASE_DIR+f'dbscan_result_{eps}_{min_pts}.npy', labels)
+    # 保存聚类结果
+    np.save(result_save_path, labels)
+    print(f"聚类结果已保存到: {result_save_path}")
+    sys.stdout.flush()
 
-    cluster_result_save(normalized_ts_list, seq_len, labels,
-                        save_dir=rf'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/')
-    print("ALL DONE")
+    # 保存聚类分析结果
+    cluster_result_save(normalized_ts_list, seq_len, labels, save_dir=cluster_result_dir)
+    print(f"聚类分析结果已保存到: {cluster_result_dir}")
+    sys.stdout.flush()
+
+    print("\n" + "=" * 60)
+    print("ALL DONE!")
+    print("=" * 60)
+    sys.stdout.flush()
