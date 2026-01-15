@@ -4,11 +4,10 @@ import pandas as pd
 import numpy as np
 
 # ===================== 1. 配置项（大写常量，统一管理） =====================
-ACTIVE_DIR = r"D:\KnowledgeDatabase\ComputerSecience\PROJ_NILM\source_code\DL_mapping\label-studio-test\washing_machine_all\data"
-CPS_DIR = r"D:\KnowledgeDatabase\ComputerSecience\PROJ_NILM\source_code\DL_mapping\label-studio-test" \
-          r"\washing_machine_all\output"
-OUTPUT_DIR = r"./cluster_data/washing_machine_manually/"
-APPLIANCE_NAME = "washing_machine"
+ACTIVE_DIR = r"../../ukdale_disaggregate/after_seg/microwave/data"
+CPS_DIR = r"../../ukdale_disaggregate/after_seg/microwave/label"
+OUTPUT_DIR = r"./cluster_data/microwave/"
+APPLIANCE_NAME = "fridge"
 CSV_ENCODING = "utf-8"  # 若报编码错，可改为"gbk"或"utf-8-sig"
 SAVE_NON_MATCH_FILE = True
 
@@ -243,30 +242,29 @@ def save_file_for_cluster():
     return padded_array, lengths_array, cut_data_list
 
 
-if __name__ == "__main__":
-    # 校验文件夹是否存在
-    if not os.path.exists(ACTIVE_DIR):
-        print(f"❌ Error: Active directory not exist → {ACTIVE_DIR}")
-        exit(1)
-    if not os.path.exists(CPS_DIR):
-        print(f"❌ Error: CPS directory not exist → {CPS_DIR}")
-        exit(1)
-
-    padded_array, lengths_array, mapping_list = save_file_for_cluster()
-
-    # 保存为.npy文件
-    np.save(OUTPUT_DIR+'data.npy', padded_array)
-    np.save(OUTPUT_DIR+'seq_length.npy', lengths_array)
-    print("Arrays saved successfully!")
-    print(f"Files saved: data.npy, seq_length.npy")
-
-    # 创建cluster_data目录（如果不存在）
-    os.makedirs("cluster_data", exist_ok=True)
-
-    # 保存mapping_list到JSON文件
-    with open(OUTPUT_DIR + "data_mapping_list.json", "w", encoding="utf-8") as f:
-        json.dump(mapping_list, f, ensure_ascii=False, indent=4)
-
-    print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list.json")
-    print(f"Total entries in mapping list: {len(mapping_list)}")
-
+# if __name__ == "__main__":
+#     # 校验文件夹是否存在
+#     if not os.path.exists(ACTIVE_DIR):
+#         print(f"❌ Error: Active directory not exist → {ACTIVE_DIR}")
+#         exit(1)
+#     if not os.path.exists(CPS_DIR):
+#         print(f"❌ Error: CPS directory not exist → {CPS_DIR}")
+#         exit(1)
+#
+#     padded_array, lengths_array, mapping_list = save_file_for_cluster()
+#
+#     # 保存为.npy文件
+#     np.save(OUTPUT_DIR+'data.npy', padded_array)
+#     np.save(OUTPUT_DIR+'seq_length.npy', lengths_array)
+#     print("Arrays saved successfully!")
+#     print(f"Files saved: data.npy, seq_length.npy")
+#
+#     # 创建cluster_data目录（如果不存在）
+#     os.makedirs("cluster_data", exist_ok=True)
+#
+#     # 保存mapping_list到JSON文件
+#     with open(OUTPUT_DIR + "data_mapping_list.json", "w", encoding="utf-8") as f:
+#         json.dump(mapping_list, f, ensure_ascii=False, indent=4)
+#
+#     print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list.json")
+#     print(f"Total entries in mapping list: {len(mapping_list)}")

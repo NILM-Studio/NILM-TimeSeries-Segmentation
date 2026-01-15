@@ -1,5 +1,11 @@
 # 时间序列聚类分析
 
+主要用于对时间序列数据进行聚类分析，主要结构如下：
+- dbscan.py:  DBSCAN算法实现，可以完成从数据聚类到可视化分析的全流程
+- cluster_result_analyze.py:  对聚类结果进行可视化分析
+- timeseries_clustering.py:  包含聚类的通用方法，包括将数据转化为聚类方法的输入格式
+
+
 
 ## DeTSEC聚类算法
 ### 输入（Inputs）

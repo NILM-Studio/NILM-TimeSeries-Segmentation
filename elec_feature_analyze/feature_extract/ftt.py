@@ -450,11 +450,6 @@ def df_fft_visualize(df: pd.DataFrame, signal_col: str, sampling_freq, time_col=
     plt.show()
 
 
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-
-
 def fft_freq_separation_visualize(
         df, signal_col, sampling_freq, time_col=None,
         n_components=3, freq_bandwidth=0.5, include_dc=False
@@ -582,26 +577,376 @@ def fft_freq_separation_visualize(
 
 
 # 运行示例
-if __name__ == '__main__':
-    df = pd.read_csv(r'../process_dataset/Air-condition/Air_condition.csv')[:6000]
-    # df_fft_visualize(
-    #     df=df,
-    #     signal_col='active power',  # 你的信号列名
-    #     sampling_freq=1,  # 你的信号采样频率（必需）
-    #     time_col=None,  # 你的时间列名（可选，无则传None）
-    #     fig_title='电流信号傅里叶变换分析'  # 自定义图表标题
-    # )
+# if __name__ == '__main__':
+#     df = pd.read_csv(r'../process_dataset/Air-condition/Air_condition.csv')[:6000]
+#     # df_fft_visualize(
+#     #     df=df,
+#     #     signal_col='active power',  # 你的信号列名
+#     #     sampling_freq=1,  # 你的信号采样频率（必需）
+#     #     time_col=None,  # 你的时间列名（可选，无则传None）
+#     #     fig_title='电流信号傅里叶变换分析'  # 自定义图表标题
+#     # )
+#
+#     # 分离Top3主要频率成分
+#     target_freqs, separated_signals, combined_signal = fft_freq_separation_visualize(
+#         df=df,
+#         signal_col='active power',  # 你的信号列名
+#         sampling_freq=1,  # 采样频率（必需）
+#         time_col=None,  # 时间列名（可选）
+#         n_components=5,  # 要分离的频率数量（默认3）
+#         freq_bandwidth=0.8,  # 频率筛选带宽（根据信号调整，越大包含越多谐波）
+#         include_dc=False  # 不包含直流分量
+#     )
+#
+#     # 输出分离的频率
+#     print("分离的主要频率：", np.round(target_freqs, 1), "Hz")
 
-    # 分离Top3主要频率成分
-    target_freqs, separated_signals, combined_signal = fft_freq_separation_visualize(
-        df=df,
-        signal_col='active power',  # 你的信号列名
-        sampling_freq=1,  # 采样频率（必需）
-        time_col=None,  # 时间列名（可选）
-        n_components=5,  # 要分离的频率数量（默认3）
-        freq_bandwidth=0.8,  # 频率筛选带宽（根据信号调整，越大包含越多谐波）
-        include_dc=False  # 不包含直流分量
-    )
 
-    # 输出分离的频率
-    print("分离的主要频率：", np.round(target_freqs, 1), "Hz")
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+
+data = pd.read_csv(
+    "/ukdale_disaggregate/after_seg/washing_machine/data/Washing_Machine_20121110_182407_20121110_191850_463s.csv")
+data = data['power']
+
+# ===================== 2. FFT核心分离代码（关键，固定不变） =====================
+n = len(data)
+# 步骤1：执行快速傅里叶变换，得到频域复数数组
+fft_vals = np.fft.fft(data.values)  # 使用 .values 确保是numpy数组
+# 步骤2：计算频率轴（横轴），确定每个点对应的真实频率
+freq = np.fft.fftfreq(n, d=1)  # d=1表示时间步长为1，和你的数据匹配
+# 步骤3：设定频率阈值，核心分割点【对你的数据，阈值设为0.05最佳】
+freq_threshold = 0.05
+# 过滤高频：只保留频率绝对值 ≤ 阈值的分量（低频尖峰），高频全部置0
+fft_filtered_low = fft_vals.copy()
+fft_filtered_low[np.abs(freq) > freq_threshold] = 0
+# 过滤低频：只保留频率绝对值 > 阈值的分量（高频波动），低频全部置0
+fft_filtered_high = fft_vals.copy()
+fft_filtered_high[np.abs(freq) < freq_threshold] = 0
+# 步骤4：逆傅里叶变换，还原回时间域的信号
+spike_only = np.fft.ifft(fft_filtered_low).real  # 分离后的纯尖峰信号
+fluct_only = np.fft.ifft(fft_filtered_high).real  # 分离后的纯波动信号
+
+# ===================== 3. 绘图展示分离效果 =====================
+plt.figure(figsize=(12, 10))
+plt.subplot(4, 1, 1)
+plt.plot(data.index.values, data.values, color='black', label='原始数据（尖峰+波动）')  # 使用 .values
+plt.title('Original Data (Spikes + High-frequency Fluctuations)', fontsize=10)
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.subplot(4, 1, 2)
+plt.plot(freq, np.abs(fft_vals), color='blue', label='频域频谱')
+plt.axvline(x=freq_threshold, color='red', linestyle='--', label='频率阈值')
+plt.axvline(x=-freq_threshold, color='red', linestyle='--')
+plt.title('FFT Frequency Spectrum', fontsize=10)
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.subplot(4, 1, 3)
+plt.plot(data.index.values, spike_only, color='darkred', linewidth=2, label='分离的低频尖峰信号')  # 使用 .values
+plt.title('Separated Low-Frequency Spikes (No Fluctuations)', fontsize=10)
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.subplot(4, 1, 4)
+plt.plot(data.index.values, fluct_only, color='darkgreen', label='分离的高频波动信号')  # 使用 .values
+plt.title('Separated High-Frequency Fluctuations (No Spikes)', fontsize=10)
+plt.legend()
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# import numpy as np
+# import matplotlib.pyplot as plt
+# import pandas as pd
+# from scipy import signal
+#
+#
+# def create_low_pass_filter(cutoff_freq, sampling_freq, order=5):
+#     """
+#     创建低通滤波器
+#
+#     Parameters:
+#     cutoff_freq: 截止频率
+#     sampling_freq: 采样频率
+#     order: 滤波器阶数
+#
+#     Returns:
+#     b, a: 滤波器系数
+#     """
+#     nyquist_freq = sampling_freq / 2
+#     normalized_cutoff = cutoff_freq / nyquist_freq
+#     b, a = signal.butter(order, normalized_cutoff, btype='low', analog=False)
+#     return b, a
+#
+#
+# def create_high_pass_filter(cutoff_freq, sampling_freq, order=5):
+#     """
+#     创建高通滤波器
+#
+#     Parameters:
+#     cutoff_freq: 截止频率
+#     sampling_freq: 采样频率
+#     order: 滤波器阶数
+#
+#     Returns:
+#     b, a: 滤波器系数
+#     """
+#     nyquist_freq = sampling_freq / 2
+#     normalized_cutoff = cutoff_freq / nyquist_freq
+#     b, a = signal.butter(order, normalized_cutoff, btype='high', analog=False)
+#     return b, a
+#
+#
+# def apply_filter(data, b, a):
+#     """
+#     应用滤波器到数据
+#
+#     Parameters:
+#     data: 输入信号
+#     b, a: 滤波器系数
+#
+#     Returns:
+#     filtered_data: 滤波后的信号
+#     """
+#     filtered_data = signal.filtfilt(b, a, data)
+#     return filtered_data
+#
+#
+# def visualize_filter_response(b, a, sampling_freq, filter_type="Low Pass"):
+#     """
+#     可视化滤波器频率响应
+#
+#     Parameters:
+#     b, a: 滤波器系数
+#     sampling_freq: 采样频率
+#     filter_type: 滤波器类型
+#     """
+#     w, h = signal.freqz(b, a, worN=8000)
+#     freq = w * sampling_freq / (2 * np.pi)
+#
+#     plt.figure(figsize=(12, 6))
+#     plt.subplot(2, 1, 1)
+#     plt.plot(freq, 20 * np.log10(abs(h)), 'b')
+#     plt.axvline(0.05, color='red', linestyle='--', label=f'Cutoff Frequency: 0.05 Hz')
+#     plt.title(f'{filter_type} Filter Frequency Response')
+#     plt.xlabel('Frequency (Hz)')
+#     plt.ylabel('Amplitude (dB)')
+#     plt.grid(True)
+#     plt.legend()
+#
+#     plt.subplot(2, 1, 2)
+#     plt.plot(freq, np.angle(h), 'g')
+#     plt.title(f'{filter_type} Filter Phase Response')
+#     plt.xlabel('Frequency (Hz)')
+#     plt.ylabel('Phase (radians)')
+#     plt.grid(True)
+#
+#     plt.tight_layout()
+#     plt.show()
+#
+#
+# def filter_and_visualize(data, low_cutoff=0.05, high_cutoff=0.05, sampling_freq=1.0):
+#     """
+#     应用高低通滤波器并对结果进行可视化
+#
+#     Parameters:
+#     data: 输入信号 (pandas Series)
+#     low_cutoff: 低通滤波器截止频率
+#     high_cutoff: 高通滤波器截止频率
+#     sampling_freq: 采样频率
+#     """
+#     # 创建滤波器
+#     lp_b, lp_a = create_low_pass_filter(low_cutoff, sampling_freq)
+#     hp_b, hp_a = create_high_pass_filter(high_cutoff, sampling_freq)
+#
+#     # 应用滤波器
+#     low_passed = apply_filter(data.values, lp_b, lp_a)
+#     high_passed = apply_filter(data.values, hp_b, hp_a)
+#
+#     # 可视化滤波器响应
+#     visualize_filter_response(lp_b, lp_a, sampling_freq, "Low Pass")
+#     visualize_filter_response(hp_b, hp_a, sampling_freq, "High Pass")
+#
+#     # 可视化滤波效果
+#     plt.figure(figsize=(15, 12))
+#
+#     # 原始信号
+#     plt.subplot(4, 1, 1)
+#     plt.plot(data.index.values, data.values, color='black', label='原始信号')
+#     plt.title('原始信号')
+#     plt.ylabel('幅值')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     # 低通滤波结果
+#     plt.subplot(4, 1, 2)
+#     plt.plot(data.index.values, low_passed, color='blue', label=f'低通滤波 (< {low_cutoff}Hz)')
+#     plt.title(f'低通滤波结果 (截止频率: {low_cutoff}Hz)')
+#     plt.ylabel('幅值')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     # 高通滤波结果
+#     plt.subplot(4, 1, 3)
+#     plt.plot(data.index.values, high_passed, color='red', label=f'高通滤波 (> {high_cutoff}Hz)')
+#     plt.title(f'高通滤波结果 (截止频率: {high_cutoff}Hz)')
+#     plt.ylabel('幅值')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     # 对比图
+#     plt.subplot(4, 1, 4)
+#     plt.plot(data.index.values, data.values, color='black', label='原始信号', alpha=0.7)
+#     plt.plot(data.index.values, low_passed, color='blue', label=f'低通滤波 (< {low_cutoff}Hz)', linewidth=2)
+#     plt.plot(data.index.values, high_passed, color='red', label=f'高通滤波 (> {high_cutoff}Hz)', linewidth=2)
+#     plt.title('滤波效果对比')
+#     plt.xlabel('样本点')
+#     plt.ylabel('幅值')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     plt.tight_layout()
+#     plt.show()
+#
+#     return low_passed, high_passed
+#
+#
+# def compare_with_fft_method(data, cutoff_freq=0.05):
+#     """
+#     比较传统滤波器方法和FFT方法的结果
+#
+#     Parameters:
+#     data: 输入信号
+#     cutoff_freq: 截止频率
+#     """
+#     sampling_freq = 1.0  # 假设采样频率为1Hz
+#
+#     # 使用传统滤波器方法
+#     lp_b, lp_a = create_low_pass_filter(cutoff_freq, sampling_freq)
+#     hp_b, hp_a = create_high_pass_filter(cutoff_freq, sampling_freq)
+#
+#     low_passed_filt = apply_filter(data.values, lp_b, lp_a)
+#     high_passed_filt = apply_filter(data.values, hp_b, hp_a)
+#
+#     # 使用FFT方法 (来自您的原始代码)
+#     n = len(data)
+#     fft_vals = np.fft.fft(data.values)
+#     freq = np.fft.fftfreq(n, d=1)
+#
+#     # FFT低通和高通
+#     fft_filtered_low = fft_vals.copy()
+#     fft_filtered_low[np.abs(freq) > cutoff_freq] = 0
+#     fft_filtered_high = fft_vals.copy()
+#     fft_filtered_high[np.abs(freq) < cutoff_freq] = 0
+#
+#     fft_low_passed = np.fft.ifft(fft_filtered_low).real
+#     fft_high_passed = np.fft.ifft(fft_filtered_high).real
+#
+#     # 可视化对比
+#     plt.figure(figsize=(15, 10))
+#
+#     # 低通滤波对比
+#     plt.subplot(3, 1, 1)
+#     plt.plot(data.index.values, data.values, color='black', label='原始信号', alpha=0.7)
+#     plt.plot(data.index.values, low_passed_filt, color='blue',
+#              label=f'传统低通滤波 (< {cutoff_freq}Hz)', linewidth=2)
+#     plt.plot(data.index.values, fft_low_passed, color='cyan',
+#              label=f'FFT低通滤波 (< {cutoff_freq}Hz)', linewidth=1, linestyle='--')
+#     plt.title('低通滤波方法对比')
+#     plt.ylabel('幅值')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     # 高通滤波对比
+#     plt.subplot(3, 1, 2)
+#     plt.plot(data.index.values, data.values, color='black', label='原始信号', alpha=0.7)
+#     plt.plot(data.index.values, high_passed_filt, color='red',
+#              label=f'传统高通滤波 (> {cutoff_freq}Hz)', linewidth=2)
+#     plt.plot(data.index.values, fft_high_passed, color='orange',
+#              label=f'FFT高通滤波 (> {cutoff_freq}Hz)', linewidth=1, linestyle='--')
+#     plt.title('高通滤波方法对比')
+#     plt.ylabel('幅值')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     # 差异对比
+#     plt.subplot(3, 1, 3)
+#     plt.plot(data.index.values, np.abs(low_passed_filt - fft_low_passed),
+#              color='blue', label='低通方法差异', alpha=0.7)
+#     plt.plot(data.index.values, np.abs(high_passed_filt - fft_high_passed),
+#              color='red', label='高通方法差异', alpha=0.7)
+#     plt.title('不同滤波方法的差异')
+#     plt.xlabel('样本点')
+#     plt.ylabel('幅值差异')
+#     plt.grid(True, alpha=0.3)
+#     plt.legend()
+#
+#     plt.tight_layout()
+#     plt.show()
+#
+#
+# # 示例使用
+# if __name__ == "__main__":
+#     # 加载数据
+#     data = pd.read_csv(
+#         "D:\\KnowledgeDatabase\\ComputerSecience\\PROJ_NILM\\nilm_experiment\\ukdale_disaggregate\\after_seg"
+#         "\\washing_machine\\data\\Washing_Machine_20121110_182407_20121110_191850_463s.csv")
+#     data = data['power']
+#
+#     # # 应用高低通滤波器并可视化
+#     # low_passed, high_passed = filter_and_visualize(data, low_cutoff=0.3, high_cutoff=0.3)
+#     #
+#     # # 比较FFT方法和传统滤波器方法
+#     # compare_with_fft_method(data, cutoff_freq=0.05)
+#
+#     n = len(data)
+#     # 步骤1：执行快速傅里叶变换，得到频域复数数组
+#     fft_vals = np.fft.fft(data.values)  # 使用.values确保是numpy数组
+#     # 步骤2：计算频率轴（横轴），确定每个点对应的真实频率
+#     freq = np.fft.fftfreq(n, d=1)  # d=1表示时间步长为1，和你的数据匹配
+#     # 步骤3：设定频率阈值，核心分割点【对你的数据，阈值设为0.05最佳】
+#     freq_threshold = 0.05
+#     # 过滤高频：只保留频率绝对值 ≤ 阈值的分量（低频尖峰），高频全部置0
+#     fft_filtered_low = fft_vals.copy()
+#     fft_filtered_low[np.abs(freq) > freq_threshold] = 0
+#     # 过滤低频：只保留频率绝对值 > 阈值的分量（高频波动），低频全部置0
+#     fft_filtered_high = fft_vals.copy()
+#     fft_filtered_high[np.abs(freq) < freq_threshold] = 0
+#     # 步骤4：逆傅里叶变换，还原回时间域的信号
+#     spike_only = np.fft.ifft(fft_filtered_low).real  # 分离后的纯尖峰信号
+#     fluct_only = np.fft.ifft(fft_filtered_high).real  # 分离后的纯波动信号
+#
+#     # ===================== 3. 绘图展示分离效果 =====================
+#     plt.figure(figsize=(12, 10))
+#     plt.subplot(4, 1, 1)
+#     plt.plot(data.index.values, data.values, color='black', label='原始数据（尖峰+波动）')  # 修改这里
+#     plt.title('Original Data (Spikes + High-frequency Fluctuations)', fontsize=10)
+#     plt.legend()
+#     plt.grid(True, alpha=0.3)
+#
+#     plt.subplot(4, 1, 2)
+#     plt.plot(freq, np.abs(fft_vals), color='blue', label='频域频谱')
+#     plt.axvline(x=freq_threshold, color='red', linestyle='--', label='频率阈值')
+#     plt.axvline(x=-freq_threshold, color='red', linestyle='--')
+#     plt.title('FFT Frequency Spectrum', fontsize=10)
+#     plt.legend()
+#     plt.grid(True, alpha=0.3)
+#
+#     plt.subplot(4, 1, 3)
+#     plt.plot(data.index.values, spike_only, color='darkred', linewidth=2, label='分离的低频尖峰信号')
+#     plt.title('Separated Low-Frequency Spikes (No Fluctuations)', fontsize=10)
+#     plt.legend()
+#     plt.grid(True, alpha=0.3)
+#
+#     plt.subplot(4, 1, 4)
+#     plt.plot(data.index.values, fluct_only, color='darkgreen', label='分离的高频波动信号')
+#     plt.title('Separated High-Frequency Fluctuations (No Spikes)', fontsize=10)
+#     plt.legend()
+#     plt.grid(True, alpha=0.3)
+#
+#     plt.tight_layout()
+#     plt.show()

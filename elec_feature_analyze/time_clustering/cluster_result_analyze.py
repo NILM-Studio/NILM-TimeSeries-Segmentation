@@ -4,6 +4,7 @@ import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
 # ===============CONFIG=======================
 BASE_DIR = r'./cluster_data/washing_machine_manually/'
@@ -71,7 +72,8 @@ def visualize_dict_data_layered(data_dict, title="Layered Visualization",
                 if len(x_axis) == len(value):
                     x_pos = x_axis
                 else:
-                    print(f"Warning: x_axis length ({len(x_axis)}) does not match value length ({len(value)}) for key '{key}', using default range")
+                    print(
+                        f"Warning: x_axis length ({len(x_axis)}) does not match value length ({len(value)}) for key '{key}', using default range")
                     x_pos = np.arange(len(value))
             else:
                 x_pos = np.arange(len(value))
@@ -115,7 +117,6 @@ def visualize_dict_data_layered(data_dict, title="Layered Visualization",
     plt.show()
 
     return fig
-
 
 
 def visualize_cluster_by_time_gap(data_mapping, cluster_result, time_gap=DAYS):
@@ -163,106 +164,9 @@ def visualize_cluster_by_time_gap(data_mapping, cluster_result, time_gap=DAYS):
         cluster_time_stats[cluster_id][data_bin] += duration
 
     fig = visualize_dict_data_layered(cluster_time_stats, title="Cluster Time Statistics",
-                                     x_axis=bin_start_times)
-
+                                      x_axis=bin_start_times)
 
     return fig
-
-
-def mapping_result_to_time_axis(data_np, seq_len, data_mapping, cluster_result):
-    """
-    mapping cluster result to time axis, save and visualize the output
-    input the cluster result and output the cluster distribution in the time axis
-    :return:
-    """
-    total_start_time = data_mapping[0]['start_timestamp']
-    total_end_time = data_mapping[len(data_mapping) - 1]['end_timestamp']
-
-    # 获取字典，key是cluster_id，value是所有该cluster的数据下标索引
-    print("根据cluster分类数据中.....")
-    unique_values, indices = np.unique(cluster_result, return_inverse=True)
-    value_dict = {}
-
-    for i, value in enumerate(unique_values):
-        # 找到所有等于当前值的原始索引
-        original_indices = np.where(indices == i)[0].tolist()
-        value_dict[value] = original_indices
-
-    # 创建一个时间轴，从total_start_time到total_end_time
-    time_axis = np.arange(total_start_time, total_end_time + 1)
-    # 为每个簇创建时间序列数据
-    cluster_time_series = {}
-    for cluster_id, index_list in value_dict.items():
-        # 为当前簇创建时间序列，初始化为NaN（表示无数据）
-        cluster_data = np.full_like(time_axis, np.nan, dtype=float)
-
-        for i in index_list:
-            start_time = data_mapping[i]['start_timestamp']
-            end_time = data_mapping[i]['end_timestamp']
-            data = data_np[i][:seq_len[i]].squeeze(-1)
-
-            # 找到在时间轴上的对应位置
-            start_idx = np.where(time_axis == start_time)[0]
-            if len(start_idx) > 0:
-                start_idx = start_idx[0]
-                # 确保不超出时间轴范围
-                end_idx = min(start_idx + len(data), len(time_axis))
-                actual_len = end_idx - start_idx
-
-                if actual_len > 0:
-                    cluster_data[start_idx:end_idx] = data[:actual_len]
-
-        cluster_time_series[cluster_id] = {
-            'time_axis': time_axis,
-            'data': cluster_data
-        }
-
-    # 计算子图布局
-    n_clusters = len(cluster_time_series)
-    if n_clusters == 0:
-        print("没有聚类结果可显示")
-        return
-
-    # 计算合适的行列数
-    n_cols = 2  # 每行显示2个簇
-    n_rows = (n_clusters + 1) // 2  # 计算需要的行数
-
-    # 创建高分辨率的子图
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 6 * n_rows), dpi=150)
-
-    # 如果只有一个簇，axes不会是数组
-    if n_clusters == 1:
-        axes = [axes]
-    elif n_rows == 1 and n_clusters < 2:
-        axes = [axes] if isinstance(axes, plt.Axes) else axes
-    else:
-        axes = axes.flatten() if n_clusters > 1 else [axes]
-
-    # 生成颜色映射
-    colors = plt.cm.tab10(np.linspace(0, 1, n_clusters)) if n_clusters <= 10 else plt.cm.hsv(
-        np.linspace(0, 1, n_clusters))
-
-    # 为每个簇绘制子图
-    for idx, (cluster_id, series_data) in enumerate(cluster_time_series.items()):
-        ax = axes[idx]
-
-        # 使用特定颜色绘制时间序列数据
-        ax.plot(series_data['time_axis'], series_data['data'],
-                label=f'Cluster {cluster_id}', alpha=0.8, linewidth=1, color=colors[idx])
-
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Value')
-        ax.set_title(f'Cluster {cluster_id} on Time Axis', fontsize=12)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
-    # 隐藏多余的子图
-    for idx in range(len(cluster_time_series), len(axes)):
-        axes[idx].set_visible(False)
-
-    plt.tight_layout()
-    plt.show()
-    return plt
 
 
 def read_detsec_result():
@@ -337,6 +241,129 @@ def cluster_result_save(data_array, seq_length, cluster_result, save_dir):
         os.makedirs(dir, exist_ok=True)
         plt.savefig(dir + f'item_{i + 1}.png')
         plt.close()
+
+
+def cluster_result_quantification(cluster_labels, dist_matrix, ts_data, save_dir=None):
+    """
+    对聚类结果进行量化，使用三种指标：
+    - 轮廓系数（Silhouette Coefficient）：最直观的 “簇内紧凑 + 簇间分离” 度量
+    - DB 指数（Davies-Bouldin Index）：基于 “簇中心距离” 的聚类纯度度量
+    - CH 指数（Calinski-Harabasz Index）：基于 “方差比” 的分离度度量
+
+    :return:
+    """
+    # ===================== 5. 预处理评估数据：过滤噪声点（关键步骤！） =====================
+    # 筛选出非噪声的样本索引和对应标签
+    valid_idx = cluster_labels != -1
+    valid_dist_matrix = dist_matrix[valid_idx][:, valid_idx]  # 过滤后的DTW距离矩阵
+    valid_labels = cluster_labels[valid_idx]
+
+    # 正确处理ts_data的索引，将其转换为numpy数组以便正确索引
+    ts_data_array = np.array(ts_data)
+    valid_ts_data = ts_data_array[valid_idx]  # 过滤后的时序数据
+
+    if len(cluster_labels) != len(ts_data):
+        raise ValueError(f"标签数量({len(cluster_labels)})与时序数据数量({len(ts_data)})不匹配")
+
+    # 跳过评估的异常情况：聚类结果只有1个簇 / 无有效样本
+    n_clusters = len(np.unique(valid_labels))
+    if n_clusters < 2:
+        print("⚠️ 聚类结果仅生成1个有效簇，无法计算聚类评估指标！")
+    else:
+        # ===================== 6. 定量评估：三大核心指标计算（完整） =====================
+        ## 6.1 轮廓系数 (Silhouette Coefficient) - 核心评估指标
+        sil_score = silhouette_score(valid_dist_matrix, valid_labels, metric='precomputed')
+
+        ## 6.2 DB指数 (Davies-Bouldin Index)
+        db_score = davies_bouldin_score(valid_ts_data, valid_labels)
+
+        ## 6.3 CH指数 (Calinski-Harabasz Index)
+        ch_score = calinski_harabasz_score(valid_ts_data, valid_labels)
+
+        # ===================== 7. 结果输出 + 指标解读 =====================
+        print("=" * 60)
+        print("时序数据DBSCAN-DTW聚类 定量评估结果")
+        print("=" * 60)
+        print(f"有效聚类样本数: {len(valid_labels)} | 噪声点数: {len(cluster_labels) - len(valid_labels)}")
+        print(f"聚类簇数量: {len(np.unique(valid_labels))}")
+        print("-" * 60)
+        print(f"轮廓系数 (Silhouette) ：{sil_score:.4f} → 越接近1越好，>0.5为优秀")
+        print(f"DB指数 (Davies-Bouldin)：{db_score:.4f} → 越接近0越好，<1.5为优秀")
+        print(f"CH指数 (Calinski-Harabasz)：{ch_score:.2f} → 数值越大越好，无上限")
+        print("=" * 60)
+
+        from tslearn.barycenters import dtw_barycenter_averaging  # 时序专属：DTW重心计算
+
+        # ========== 簇中心轮廓可视化核心代码（每个簇一个子图） ==========
+        cluster_colors = plt.cm.tab10(np.arange(n_clusters))
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']  # 用来正常显示中文标签
+        # 根据簇数量动态设置图形尺寸
+        figsize_height = max(8, n_clusters * 2)  # 每个子图约2个单位高度，最少8个单位
+        fig, axes = plt.subplots(n_clusters, 1, figsize=(12, figsize_height))
+        fig.suptitle('时序聚类-各簇中心轮廓分布图 (DTW重心)', fontsize=14)
+
+        # 处理只有一个子图的情况
+        if n_clusters == 1:
+            axes = [axes]
+        elif n_clusters > 1:
+            axes = axes.flatten()
+
+        # 遍历每个簇，绘制中心轮廓
+        for i, cluster_id in enumerate(np.unique(valid_labels)):  # 使用实际存在的簇ID
+            # 筛选当前簇的所有时序样本
+            cluster_seq = valid_ts_data[valid_labels == cluster_id]
+            if len(cluster_seq) > 0:  # 确保簇中有数据
+                # 计算当前簇的【DTW重心序列】- 时序聚类的最优中心，不是简单均值！
+                cluster_center = dtw_barycenter_averaging(cluster_seq)
+                # 绘制簇中心轮廓（加粗高亮，核心特征）
+                axes[i].plot(cluster_center, color=cluster_colors[cluster_id % 10],
+                             linewidth=2, label=f'簇 {cluster_id} 中心轮廓 (样本数:{len(cluster_seq)})')
+
+                axes[i].set_title(f'簇 {cluster_id} 中心轮廓 (样本数: {len(cluster_seq)})', fontsize=12)
+                axes[i].set_xlabel('时间步 / 序列长度', fontsize=10)
+                axes[i].set_ylabel('时序数值', fontsize=10)
+                axes[i].legend(fontsize=9)
+                axes[i].grid(alpha=0.3)
+            else:
+                axes[i].text(0.5, 0.5, f'簇 {cluster_id} (样本数: 0)',
+                             horizontalalignment='center', verticalalignment='center',
+                             transform=axes[i].transAxes, fontsize=12)
+                axes[i].set_title(f'簇 {cluster_id} - 无数据', fontsize=12)
+
+        plt.tight_layout()
+        plt.savefig(save_dir + 'cluster_center.png')
+        plt.show()
+
+        from sklearn.manifold import TSNE
+
+        # ========== tSNE降维可视化核心代码（时序最优参数，无需调参） ==========
+        # tsne核心参数：perplexity是关键，时序数据设为 样本数的1/10 即可，默认30足够用
+        tsne = TSNE(
+            n_components=2,  # 降维到2维，适合可视化
+            perplexity=30,  # 核心参数，时序数据最优值：10~50，默认30
+            random_state=42,  # 固定随机种子，结果可复现
+            n_jobs=-1,  # 多核加速，计算更快
+            init='pca'  # 初始化方式，避免局部最优
+        )
+        # 对高维时序数据降维 → 得到2维坐标
+        tsne_2d = tsne.fit_transform(ts_data_array)
+
+        # ========== 绘制tSNE聚类散点图 ==========
+        plt.figure(figsize=(10, 8))
+        # 绘制有效聚类样本
+        for cluster_id in range(n_clusters):
+            idx = (cluster_labels == cluster_id) & (cluster_labels != -1)
+            plt.scatter(tsne_2d[idx, 0], tsne_2d[idx, 1], c=[cluster_colors[cluster_id]],
+                        label=f'簇 {cluster_id + 1}', s=60, alpha=0.8)
+        # 绘制噪声点
+        noise_idx = cluster_labels == -1
+        plt.scatter(tsne_2d[noise_idx, 0], tsne_2d[noise_idx, 1], c='black', marker='x', label='噪声点', s=80,
+                    alpha=0.8)
+        plt.title('时序聚类-tSNE降维分布图 (含噪声点)', fontsize=14)
+        plt.legend()
+        plt.savefig(save_dir + 'tsne.png')
+        plt.show()
+        return sil_score, db_score, ch_score
 
 
 if __name__ == '__main__':

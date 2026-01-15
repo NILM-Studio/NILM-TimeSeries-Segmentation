@@ -114,7 +114,7 @@ class NILMWaveletAnalyzer:
 # events = analyzer.detect_appliance_events(active_power_data)
 
 # 加载数据 (需要替换为实际文件路径)
-df = pd.read_csv('../process_dataset/Air-condition/Air_condition.csv')[:6000]
+df = pd.read_csv('../../process_dataset/Air-condition/Air_condition.csv')[:6000]
 power_data = df.iloc[:, 5].values
 
 # 创建分析器
