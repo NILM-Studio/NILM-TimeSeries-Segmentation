@@ -21,6 +21,70 @@ DAYS = 24 * HOURS
 MONTHS = 30 * DAYS
 
 
+def visualize_clusters(time_series_list, labels, eps, min_pts, save_file=None, title="DBSCAN-DTW Clustering Results"):
+    """
+    可视化聚类结果（优化鲁棒性和可读性）
+
+    Parameters:
+    time_series_list: list of array-like
+        时间序列列表
+    labels: array-like
+        聚类标签
+    title: str
+        图表标题
+    """
+    unique_labels = np.unique(labels)
+    non_noise_labels = unique_labels[unique_labels != -1]
+    n_non_noise = len(non_noise_labels)
+    noise_indices = np.where(labels == -1)[0]
+
+    # 处理全噪声场景
+    if n_non_noise == 0:
+        plt.figure(figsize=(12, 6))
+        plt.title(f'{title} - All Noise Points')
+        for idx in noise_indices:
+            plt.plot(time_series_list[idx].flatten(), alpha=0.5, color='black',
+                     label=f'Series {idx}' if idx < 5 else "")
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+        plt.show()
+        return
+
+    # 绘制聚类和噪声点
+    plt.figure(figsize=(12, 2 * (n_non_noise + 1)))
+    plt.suptitle(title, fontsize=14)
+
+    # 绘制每个聚类
+    for idx, cluster_id in enumerate(non_noise_labels):
+        plt.subplot(n_non_noise + 1, 1, idx + 1)
+        cluster_indices = np.where(labels == cluster_id)[0]
+        for seq_idx in cluster_indices:
+            plt.plot(time_series_list[seq_idx].flatten(), alpha=0.7, label=f'Series {seq_idx}')
+        plt.title(f'Cluster {cluster_id} (n={len(cluster_indices)}) with eps={eps}, min_pts={min_pts}')
+        plt.ylabel('Value')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(alpha=0.3)
+
+    # 绘制噪声点
+    if len(noise_indices) > 0:
+        plt.subplot(n_non_noise + 1, 1, n_non_noise + 1)
+        for seq_idx in noise_indices:
+            plt.plot(time_series_list[seq_idx].flatten(), alpha=0.7, color='black', label=f'Series {seq_idx}')
+        plt.title(f'Noise Points (n={len(noise_indices)})')
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(alpha=0.3)
+
+    plt.tight_layout()
+    if save_file is not None:
+        plt.savefig(save_file)
+    plt.show()
+    plt.close()
+
+
 def visualize_dict_data_layered(data_dict, title="Layered Visualization",
                                 bar_width=0.8, x_axis=None, max_labels=5):
     """
@@ -226,7 +290,8 @@ def cluster_result_analyze(data_info_list, cluster_dict):
 
 def cluster_result_save(data_array, seq_length, cluster_result, save_dir):
     """
-    保存结果
+    保存聚类结果，按照cluster保存所有的聚类结果，将所有时间序列片段可视化并且保存到其对应的
+    cluster_id的文件夹下
     :return:
     """
     for i in range(len(data_array)):
