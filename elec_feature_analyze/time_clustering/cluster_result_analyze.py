@@ -334,6 +334,7 @@ def cluster_result_quantification(cluster_labels, dist_matrix, ts_data, save_dir
     n_clusters = len(np.unique(valid_labels))
     if n_clusters < 2:
         print("⚠️ 聚类结果仅生成1个有效簇，无法计算聚类评估指标！")
+        return None, None, None
     else:
         # ===================== 6. 定量评估：三大核心指标计算（完整） =====================
         ## 6.1 轮廓系数 (Silhouette Coefficient) - 核心评估指标
@@ -396,8 +397,10 @@ def cluster_result_quantification(cluster_labels, dist_matrix, ts_data, save_dir
                 axes[i].set_title(f'簇 {cluster_id} - 无数据', fontsize=12)
 
         plt.tight_layout()
-        plt.savefig(save_dir + 'cluster_center.png')
-        plt.show()
+        if save_dir:
+            plt.savefig(save_dir + 'cluster_center.png')
+            plt.show()
+        plt.close()
 
         from sklearn.manifold import TSNE
 
@@ -426,8 +429,10 @@ def cluster_result_quantification(cluster_labels, dist_matrix, ts_data, save_dir
                     alpha=0.8)
         plt.title('时序聚类-tSNE降维分布图 (含噪声点)', fontsize=14)
         plt.legend()
-        plt.savefig(save_dir + 'tsne.png')
-        plt.show()
+        if save_dir:
+            plt.savefig(save_dir + 'tsne.png')
+            plt.show()
+        plt.close()
         return sil_score, db_score, ch_score
 
 
