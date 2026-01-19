@@ -16,7 +16,10 @@ except (ImportError, OSError) as e:
     TORCH_AVAILABLE = False
     print(f"❌ 无法加载PyTorch (原因: {e})，将使用CPU替代方案")
     print(f"提示: 如果遇到 WinError 1114，通常是由于 PyTorch 环境问题，建议检查或重装 torch解决anaconda的data虚拟环境的报错")
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"使用的设备: {device}")
+if torch.cuda.is_available():
+    print(f"GPU型号: {torch.cuda.get_device_name(0)}")
 sys.stdout.flush()
 
 import matplotlib.pyplot as plt
@@ -33,7 +36,7 @@ from elec_feature_analyze.time_clustering.cluster_result_analyze import cluster_
 sys.stdout.flush()
 sys.stderr.flush()
 
-BASE_DIR = r'./lstm_dbscan/data_dbscan'
+BASE_DIR = r'./lstm_dbscan/data_washing_machine'
 
 
 def fast_dtw_matrix_tslearn(ts_list, filename):
@@ -276,7 +279,7 @@ if __name__ == "__main__":
     print(f"处理完成，有效序列数量: {len(normalized_ts_list)}")
     sys.stdout.flush()
 
-    eps, min_pts = 0.05, 5
+    eps, min_pts = 0.0001, 1
     labels, dist_matrix = dbscan_dtw(normalized_ts_list, eps, min_pts)
 
     # 5. 计算聚类统计信息

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from tslearn.clustering import TimeSeriesKMeans
 from tslearn.preprocessing import TimeSeriesScalerMeanVariance
 from tslearn.utils import to_time_series_dataset
-from cluster_result_analyze import cluster_result_save
+from lstm_dbscan.cluster_result_analyze import cluster_result_save
 
 # # 1. 构造不等长时间序列（3类，每类5个样本，长度随机）
 # rng = np.random.RandomState(42)

@@ -12,7 +12,7 @@ plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
 # =============== 数据路径配置 =======================
-DATA_DIR = r'f:\B__ProfessionProject\NILM\cluster_visualization\lstm_dbscan\data_dbscan'
+DATA_DIR = r'f:\B__ProfessionProject\NILM\cluster_visualization\lstm_dbscan\data_washing_machine'
 
 CLUSTER_RESULT_FILE = os.path.join(DATA_DIR, 'detsec_clust_assignment.npy')
 
