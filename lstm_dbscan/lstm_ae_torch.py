@@ -4,6 +4,9 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset, Subset
 import numpy as np
 import os
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+import os
 
 # ===================== 0. 设备检查 =====================
 TORCH_AVAILABLE = True
@@ -27,6 +30,7 @@ batch_size = 32
 learning_rate = 0.001
 selected_feature_idx = 0  # 选择第几个特征作为输入
 patience = 5  # EarlyStopping 耐心值
+do_visualize = True      # 是否生成并显示可视化图像
 
 # ===================== 2. 加载并预处理数据 =====================
 data_path = "./lstm_dbscan/data_washing_machine/data.npy"
@@ -206,12 +210,50 @@ with torch.no_grad():
 # ===================== 结果输出 =====================
 print(f"\n原始单特征时序数据形状: {X_scaled.shape}")
 print(f"LSTM提取的特征形状: {X_lstm_extracted_features.shape}")
+result_dir = "./lstm_dbscan/data_washing_machine/"
+
+if do_visualize:
+    print("\n正在生成 t-SNE 可视化...")
+    
+    # 对提取的特征进行 t-SNE 降维
+    tsne = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+    X_tsne = tsne.fit_transform(X_lstm_extracted_features)
+    
+    plt.figure(figsize=(12, 6))
+    
+    # 子图 1: t-SNE 特征分布
+    plt.subplot(1, 2, 1)
+    plt.scatter(X_tsne[:, 0], X_tsne[:, 1], alpha=0.6, c='blue', edgecolors='none', s=20)
+    plt.title("t-SNE Visualization of LSTM Latent Features")
+    plt.xlabel("t-SNE dimension 1")
+    plt.ylabel("t-SNE dimension 2")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    # 子图 2: 原始数据抽样展示 (展示前10个样本)
+    plt.subplot(1, 2, 2)
+    for i in range(min(10, n_samples)):
+        plt.plot(X_scaled[i, :seq_len[i], 0], alpha=0.7, label=f'Sample {i}')
+    plt.title("Original Time Series Samples (Normalized)")
+    plt.xlabel("Time Steps")
+    plt.ylabel("Value")
+    # plt.legend(loc='upper right', fontsize='small')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    
+    # 保存图像
+    plot_path = f"{result_dir}tsne_distribution_torch.png"
+    plt.savefig(plot_path, dpi=300)
+    print(f"可视化图像已保存到: {plot_path}")
+    
+    # 显示图像
+    plt.show()
 
 # ===================== 保存结果 =====================
-result_dir = "./lstm_dbscan/data_washing_machine/"
+
 if not os.path.exists(result_dir):
     os.makedirs(result_dir)
-np.save(f"{result_dir}detsec_features.npy", X_lstm_extracted_features)
+np.save(f"{result_dir}detsec_features_torch.npy", X_lstm_extracted_features)
 print(f"结果已保存到: {result_dir}detsec_features.npy")
 
 # 清理临时权重文件

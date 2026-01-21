@@ -305,9 +305,9 @@ def main():
         if data is not None:
             plot_tsne(data, cluster_labels, save_path=os.path.join(OUTPUT_DIR, 'tsne_visualization_data.png'))
         
-        # C. 簇中心轮廓
-        if data is not None and seq_lengths is not None:
-            plot_cluster_centers(data, cluster_labels, seq_lengths, save_path=os.path.join(OUTPUT_DIR, 'cluster_centers.png'))
+        # # C. 簇中心轮廓
+        # if data is not None and seq_lengths is not None:
+        #     plot_cluster_centers(data, cluster_labels, seq_lengths, save_path=os.path.join(OUTPUT_DIR, 'cluster_centers.png'))
         
         # D. 时间分布
         if mapping_list is not None:
