@@ -4,18 +4,28 @@ import pandas as pd
 import numpy as np
 
 # ===================== 1. 配置项（大写常量，统一管理） =====================
-ACTIVE_DIR = r"../../ukdale_disaggregate/after_seg/microwave/data"
-CPS_DIR = r"../../ukdale_disaggregate/after_seg/microwave/label"
-OUTPUT_DIR = r"./cluster_data/microwave/"
-APPLIANCE_NAME = "fridge"
+ACTIVE_DIR = r"../../ukdale_disaggregate/clasp_seg/washing_machine_freq/data"
+CPS_DIR = r"../../ukdale_disaggregate/clasp_seg/washing_machine_freq/label"
+OUTPUT_DIR = r"./cluster_data/washing_machine_freq/"
+APPLIANCE_NAME = "washing_machine_freq"
+'''
+可选DATA_COLUMN:
+- `power`: The original power value at the timestamp.
+- `cleaned_power`: The power processed by median filter at the timestamp.
+- `high_freq`: The high-frequency signal component by db4 wavelet decomposition.
+- `low_freq`: The low-frequency signal component by db4 wavelet decomposition.
+'''
+DATA_COLUMN = ['power', 'cleaned_power', 'high_freq', 'low_freq']
 CSV_ENCODING = "utf-8"  # 若报编码错，可改为"gbk"或"utf-8-sig"
 SAVE_NON_MATCH_FILE = True
 
 
 # ===================== 2. 核心函数：以active文件为核心匹配+读取 =====================
-def match_active_with_cps():
+def match_active_with_cps(label_type_filter=0):
     """
     核心逻辑：遍历active文件夹，匹配对应的CPS文件，读取active文件为DataFrame，构建匹配结果
+    参数：
+        label_type_filter: int, 指定要获取的label_type值，-1表示获取所有cps
     返回：
         match_results: 列表[字典]，每个字典对应一个active文件的匹配+数据信息
     """
@@ -41,11 +51,12 @@ def match_active_with_cps():
             "appliance": APPLIANCE_NAME,
             "data_file": active_filename,  # active文件名（如xxx.csv）
             "data_path": active_path,  # active文件完整路径
+            "data_column": DATA_COLUMN,
             "data": None,  # 存储读取后的DataFrame
             "cps_file": None,  # 对应的CPS文件名（如Changepoint_xxx.csv）
             "cps": None,
             "cut_data": [],
-            "match_status": "None",  # 匹配状态：Success/None
+            "match_status": "No_CPS",  # 匹配状态：Success/None_CPS
         }
 
         # 检查CPS文件是否存在
@@ -53,13 +64,19 @@ def match_active_with_cps():
             current_match["cps_file"] = cps_target_filename
             current_match["match_status"] = "Success"
             try:
-                current_match["cps"] = pd.read_csv(cps_target_path, encoding=CSV_ENCODING)
+                cps_df = pd.read_csv(cps_target_path, encoding=CSV_ENCODING)
+
+                # 根据label_type过滤CPS数据
+                if label_type_filter != -1:
+                    cps_df = cps_df[cps_df['label_type'] == label_type_filter]
+
+                current_match["cps"] = cps_df
             except Exception as e:
                 print(f"Error reading CPS file: {cps_target_path}")
                 print(f"Error details: {str(e)}")
                 current_match["cps"] = None
         else:
-            continue
+            print(f"× No CPS file found: {cps_target_path},SKIP")
 
         # 步骤3：读取active文件为DataFrame（无论是否匹配到CPS文件都尝试读取）
         try:
@@ -79,6 +96,10 @@ def match_active_with_cps():
     match_success = sum(1 for res in match_results if res["match_status"] == "Success")
     print(f"Total active files: {total_active}")
     print(f"CPS match success: {match_success} | None match: {total_active - match_success}")
+
+    if label_type_filter != -1:
+        cps_count = sum(len(res["cps"]) if res["cps"] is not None else 0 for res in match_results)
+        print(f"Filtered CPS records with label_type {label_type_filter}: {cps_count}")
 
     return match_results
 
@@ -129,8 +150,8 @@ def cutting_data_by_cps():
                     "data": cut_data
                 }
                 cut_data_list.append(cut_res)
-        else:
-            if SAVE_NON_MATCH_FILE:
+        elif res["match_status"] == "No_CPS":
+            if SAVE_NON_MATCH_FILE and res["data"] is not None:
                 print(f"No CPS file found for {res['data_file']}, output origin data directly")
                 data = res["data"]
                 cut_res = {
@@ -145,20 +166,25 @@ def cutting_data_by_cps():
             else:
                 print(f"No CPS file found for {res['data_file']}, SKIP")
                 continue
+        else:
+            continue
 
     return cut_data_list, match_results
 
 
-def save_file_for_cluster():
+def save_file_for_cluster(extract_list=None):
     """
-    将切割后的数据展平并填充为相同长度，存储为numpy数组格式以便后续处理
+    将切割后的数据展平并填充为相同长度，存储为numpy数组格式以便后续聚类处理
+    :param extract_list: 要提取的列名列表，默认为['power']
     :returns
-    padded_array: 完成展平后的数据，维度为(n, max_len, 1) 或 (n, max_len, 3)
-                 当存在cluster_label列时为(n, max_len, 3)，其中：
-                 [:, :, 0]为power_new，[:, :, 1]为power，[:, :, 2]为cluster_label
-                 否则为(n, max_len, 1)，其中[:, :, 0]为power
+    padded_array: 完成展平后的数据，维度为(n, max_len, num_features)
+                 其中num_features为extract_list的长度
     lengths_array: 每个samples的长度，(n, 1)
     """
+    import matplotlib.pyplot as plt
+
+    if extract_list is None:
+        extract_list = ['power']
     cut_data_list, match_results = cutting_data_by_cps()
     ts_list = []
     max_len = 0
@@ -171,63 +197,53 @@ def save_file_for_cluster():
         if len(df) > max_len:
             max_len = len(df)
 
-    # 检查是否存在cluster_label列
-    has_cluster_label = any('cluster_label' in df.columns for df in ts_list)
-
-    # 第二步：根据是否存在cluster_label列创建不同形状的numpy数组
+    # 第二步：根据指定列的数量创建numpy数组
     n = len(ts_list)
-    if has_cluster_label:
-        padded_array = np.zeros((n, max_len, 3))  # 3个特征：power, power_new, cluster_label
-    else:
-        padded_array = np.zeros((n, max_len, 1))  # 1个特征：power
+    num_features = len(extract_list)
+    padded_array = np.zeros((n, max_len, num_features))  # 特征数量根据指定列数确定
 
     # 创建用于记录每个df实际数据长度的数组
     lengths_array = np.zeros(n, dtype=int)
 
     # 第三步：对每个DataFrame进行展平和填充操作
     for i, df in enumerate(ts_list):
-        if has_cluster_label:
-            # 处理3维数组：power, power_new, cluster_label
-            # 提取power列
-            power_data = df['power'].values
+        # 检查DataFrame是否包含所有需要的列
+        missing_cols = [col for col in extract_list if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"DataFrame {i} is missing required columns: {missing_cols}")
 
-            # 提取power_new列（假设存在名为power_new或类似名称的列）
-            if 'power_new' in df.columns:
-                power_new_data = df['power_new'].values
-            else:
-                power_new_data = power_data  # 如果没有power_new列，复制power列
+        # 提取指定的列数据
+        extracted_data = []
+        for col in extract_list:
+            col_data = df[col].values
+            extracted_data.append(col_data)
 
-            # 提取cluster_label列
-            if 'cluster_label' in df.columns:
-                cluster_label_data = df['cluster_label'].values
-            else:
-                # 如果没有cluster_label列，用0填充
-                cluster_label_data = np.zeros(len(df))
+        # 记录当前df的实际长度
+        current_len = min(len(col_data) for col_data in extracted_data)  # 找到最短长度
+        lengths_array[i] = current_len
 
-            # 记录当前df的实际长度，剔除长度太短的
-            current_len = min(len(power_data), len(power_new_data), len(cluster_label_data))
-            lengths_array[i] = current_len
-            if current_len < 10:
-                continue
+        if current_len < 10:
+            print(f"Warning: Segment {i} is too short ({current_len} records), skipping...")
+            continue
 
-            # 填充到max_len长度
-            padded_array[i, :current_len, 0] = power_new_data[:current_len]  # power_new
-            padded_array[i, :current_len, 1] = power_data[:current_len]  # power
-            padded_array[i, :current_len, 2] = cluster_label_data[:current_len]  # cluster_label
+        # 可视化前两个数据段的特征列
+        if i < 2:
+            plt.figure(figsize=(12, 6))
+            for j, col in enumerate(extract_list):
+                plt.subplot(1, len(extract_list), j + 1)
+                plt.plot(df[col].values[:min(200, len(df))])  # 只绘制前200个点以便查看
+                plt.title(f'Segment {i + 1} - {col}')
+                plt.xlabel('Time Index')
+                plt.ylabel(col)
+            plt.tight_layout()
+            plt.show()
 
-        else:
-            # 处理1维数组：仅power列
-            flat_data = df['power'].values
-
-            # 记录当前df的实际长度
-            current_len = len(flat_data)
-            lengths_array[i] = current_len
-
-            # 填充到max_len长度
-            padded_array[i, :current_len, 0] = flat_data[:current_len]
+        # 填充到max_len长度
+        for j, col_data in enumerate(extracted_data):
+            padded_array[i, :current_len, j] = col_data[:current_len]
 
         print(
-            f"Processing segment {i + 1}/{n}: original length={current_len}, padded to {max_len}, has_cluster_label={has_cluster_label}")
+            f"Processing segment {i + 1}/{n}: original length={current_len}, padded to {max_len}, features={num_features}")
 
     # 输出最终结果的维度信息
     print(f"\n{'=' * 50}")
@@ -236,35 +252,47 @@ def save_file_for_cluster():
     print(f"Lengths array shape: {lengths_array.shape} (n_samples,)")
     print(f"Max sequence length: {max_len}")
     print(f"Total samples: {n}")
-    print(f"Has cluster_label column: {has_cluster_label}")
+    print(f"Extracted columns: {extract_list}")
     print(f"{'=' * 50}")
 
     return padded_array, lengths_array, cut_data_list
 
 
-# if __name__ == "__main__":
-#     # 校验文件夹是否存在
-#     if not os.path.exists(ACTIVE_DIR):
-#         print(f"❌ Error: Active directory not exist → {ACTIVE_DIR}")
-#         exit(1)
-#     if not os.path.exists(CPS_DIR):
-#         print(f"❌ Error: CPS directory not exist → {CPS_DIR}")
-#         exit(1)
-#
-#     padded_array, lengths_array, mapping_list = save_file_for_cluster()
-#
-#     # 保存为.npy文件
-#     np.save(OUTPUT_DIR+'data.npy', padded_array)
-#     np.save(OUTPUT_DIR+'seq_length.npy', lengths_array)
-#     print("Arrays saved successfully!")
-#     print(f"Files saved: data.npy, seq_length.npy")
-#
-#     # 创建cluster_data目录（如果不存在）
-#     os.makedirs("cluster_data", exist_ok=True)
-#
-#     # 保存mapping_list到JSON文件
-#     with open(OUTPUT_DIR + "data_mapping_list.json", "w", encoding="utf-8") as f:
-#         json.dump(mapping_list, f, ensure_ascii=False, indent=4)
-#
-#     print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list.json")
-#     print(f"Total entries in mapping list: {len(mapping_list)}")
+if __name__ == "__main__":
+    # 校验文件夹是否存在
+    if not os.path.exists(ACTIVE_DIR):
+        print(f"❌ Error: Active directory not exist → {ACTIVE_DIR}")
+        exit(1)
+    if not os.path.exists(CPS_DIR):
+        print(f"❌ Error: CPS directory not exist → {CPS_DIR}")
+        exit(1)
+
+    padded_array, lengths_array, mapping_list = save_file_for_cluster(extract_list=DATA_COLUMN)
+
+    # 清空输出文件夹（如果存在）
+    if os.path.exists(OUTPUT_DIR):
+        print(f"Clearing existing output directory: {OUTPUT_DIR}")
+        for file in os.listdir(OUTPUT_DIR):
+            file_path = os.path.join(OUTPUT_DIR, file)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"  Removed: {file}")
+
+    # 确保输出文件夹存在
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    # 保存为.npy文件
+    np.save(OUTPUT_DIR + 'data.npy', padded_array)
+    np.save(OUTPUT_DIR + 'seq_length.npy', lengths_array)
+    print("Arrays saved successfully!")
+    print(f"Files saved: data.npy, seq_length.npy")
+
+    # 创建cluster_data目录（如果不存在）
+    os.makedirs("cluster_data", exist_ok=True)
+
+    # 保存mapping_list到JSON文件
+    with open(OUTPUT_DIR + "data_mapping_list.json", "w", encoding="utf-8") as f:
+        json.dump(mapping_list, f, ensure_ascii=False, indent=4)
+
+    print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list.json")
+    print(f"Total entries in mapping list: {len(mapping_list)}")

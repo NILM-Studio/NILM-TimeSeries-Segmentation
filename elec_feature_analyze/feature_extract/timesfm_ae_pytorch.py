@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from timesfm.timesfm_torch import TimesFmTorch as TimesFm
+from timesfm import timesfm_base, timesfm_torch
+import timesfm
 
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -13,7 +15,7 @@ print(f"✅ CUDA可用: {torch.cuda.is_available()}")
 device_flag = "gpu" if torch.cuda.is_available() else "cpu"
 
 # ===================================== 2. Hyperparameter=====================================
-latent_dim = 8  # 最终特征维度
+latent_dim = 32  # 最终特征维度
 epochs = 50  # 训练轮数
 batch_size = 32  # batch大小
 learning_rate = 0.001  # 学习率
@@ -41,22 +43,34 @@ train_x = data_tensor[:-val_size]
 val_x = data_tensor[-val_size:]
 
 # ===================================== 4. ✅ 官方TimesFm 正确初始化【严格对齐你贴的源码，无任何错误】=====================================
-timesfm = TimesFm(
-    context_len=512,  # 上下文长度
-    horizon_len=timesteps,  # 预测视野长度，等于你的时间步
-    input_patch_len=timesteps,  # 输入分块长度=你的时间步
-    output_patch_len=timesteps,  # 输出分块长度=输入长度
-    num_layers=6,  # 层数
-    num_heads=4,  # 头数，满足 32%4=0
-    model_dims=32,  # 模型核心维度
-    quantiles=[0.1, 0.5, 0.9],  # 分位数
-    per_core_batch_size=batch_size,  # 单卡batch大小
-    backend=device_flag,  # cpu/gpu自动适配
-    use_pos_emb=True  # 开启位置编码
+print("\nTimesFmTorch初始化参数：timesfm_parameter和与官方训练参数checkpoint")
+hparams = timesfm.TimesFmHparams(
+    backend=device_flag,
+    per_core_batch_size=32,
+    horizon_len=128,
+    input_patch_len=32,
+    output_patch_len=128,
+    num_layers=50,
+    model_dims=1280,
+    use_positional_embedding=False,
 )
+
+# checkpoint = timesfm_base.TimesFmCheckpoint(
+#     version="torch",
+#     huggingface_repo_id="google/timesfm-1.0-200m",  # 官方仓库
+#     local_dir="./timesfm_cache"  # 缓存目录，避免重复下载
+# )
+# timesfm-1.0-200m-pytorch or timesfm-2.0-500m-pytorch
+checkpoint = timesfm.TimesFmCheckpoint(
+    version="torch",
+    local_dir="./timesfm_cache",
+    huggingface_repo_id="google/timesfm-2.0-500m-pytorch")
+
+timesfm = TimesFm(hparams=hparams, checkpoint=checkpoint)
 print("\nTimesFmTorch初始化成功！")
 
 
+# ===================================== 5. TimesFm+自编码器封装【适配无监督训练+特征提取】=====================================
 # ===================================== 5. TimesFm+自编码器封装【适配无监督训练+特征提取】=====================================
 class TimesFMAutoEncoder(nn.Module):
     def __init__(self, timesfm_model, timesteps, n_features, latent_dim):
@@ -66,9 +80,12 @@ class TimesFMAutoEncoder(nn.Module):
         self.n_features = n_features
         self.latent_dim = latent_dim
 
+        # TimesFM的horizon_len参数决定了输出长度，这里是128
+        timesfm_output_len = 128  # 与hparams中的horizon_len一致
+
         # 特征提取投影层：时序输出 → 样本级低维特征
         self.encoder_proj = nn.Sequential(
-            nn.Linear(n_features, 32),
+            nn.Linear(timesfm_output_len, 32),  # 修改：输入维度为TimesFM输出长度128
             nn.ReLU(),
             nn.Linear(32, latent_dim)
         )
@@ -77,28 +94,39 @@ class TimesFMAutoEncoder(nn.Module):
         self.decoder_proj = nn.Sequential(
             nn.Linear(latent_dim, 32),
             nn.ReLU(),
-            nn.Linear(32, n_features)
+            nn.Linear(32, timesteps * n_features)  # 输出完整的时序数据
         )
 
-        # 核心：冻结官方TimesFm预训练权重，只训练投影层，不破坏预训练效果
-        for param in self.timesfm.parameters():
-            param.requires_grad = False
-
     def encode(self, x):
-        """特征提取：官方forecast输出 + 全局平均池化 → (batch_size, latent_dim)"""
-        with torch.no_grad():  # 官方模型推理无梯度
-            forecast_out = self.timesfm.forecast(x)  # 官方唯一调用方法，输出和输入同形状
-        feat = torch.mean(forecast_out, dim=1)  # 时序维度池化 → 样本级特征
-        feat = self.encoder_proj(feat)
+        """特征提取：将输入转换为TimesFM格式，然后获取特征"""
+        batch_size = x.shape[0]
+
+        # 将PyTorch张量转换为TimesFM期望的格式
+        input_list = []
+        for i in range(batch_size):
+            # 提取单个样本并转换为numpy
+            sample = x[i, :, 0].cpu().numpy()  # 取第一个特征维度，形状为(timesteps,)
+            input_list.append(sample)
+
+        with torch.no_grad():  # 确保TimesFM预训练权重不被更新
+            # 调用TimesFM的forecast方法
+            forecast_mean, forecast_full = self.timesfm.forecast(input_list)
+            # forecast_mean shape: (batch_size, horizon_len=128)
+            forecast_tensor = torch.from_numpy(forecast_mean).float().to(x.device)
+
+        # 通过投影层获得固定长度的特征
+        feat = self.encoder_proj(forecast_tensor)  # 输入: (batch, 128) -> 输出: (batch, latent_dim)
         return feat
 
     def forward(self, x):
         """无监督重构：特征提取 → 时序还原"""
         feat = self.encode(x)
-        # 特征扩维：(batch, latent_dim) → (batch, timesteps, latent_dim)
-        feat_expand = feat.unsqueeze(1).repeat(1, self.timesteps, 1)
-        recon_x = self.decoder_proj(feat_expand)
+        # 重构：通过解码器投影
+        recon_flat = self.decoder_proj(feat)  # (batch, latent_dim) -> (batch, timesteps*n_features)
+        # 重塑为原始形状
+        recon_x = recon_flat.view(x.shape[0], self.timesteps, self.n_features)
         return recon_x
+
 
 
 # 初始化模型

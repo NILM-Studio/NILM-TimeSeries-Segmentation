@@ -22,7 +22,7 @@ if torch.cuda.is_available():
 
 # ===================== 1. 核心超参数 =====================
 latent_dim = 64  # 提取的特征维度
-epochs = 50
+epochs = 200
 batch_size = 32
 learning_rate = 0.001
 selected_feature_idx = 0  # 选择第几个特征作为输入
@@ -211,8 +211,8 @@ print(f"LSTM提取的特征形状: {X_lstm_extracted_features.shape}")
 result_dir = "./lstm_dbscan/data_washing_machine/"
 if not os.path.exists(result_dir):
     os.makedirs(result_dir)
-np.save(f"{result_dir}detsec_features.npy", X_lstm_extracted_features)
-print(f"结果已保存到: {result_dir}detsec_features.npy")
+np.save(f"{result_dir}lstm_ae_features.npy", X_lstm_extracted_features)
+print(f"结果已保存到: {result_dir}lstm_ae_features.npy")
 
 # 清理临时权重文件
 if os.path.exists('checkpoint.pt'):

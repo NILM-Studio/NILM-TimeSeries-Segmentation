@@ -4,6 +4,7 @@ dataset_by_day/
 exp_pic/
 elec_feature_analyze/time_clustering/cluster_data/
 elec_feature_analyze/analyze_result/
+elec_feature_analyze/feature_extract/timesfm_cache/
 # 数据集
 process_dataset/Air-condition/
 process_dataset/WashMachine/

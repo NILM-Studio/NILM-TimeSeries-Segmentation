@@ -4,26 +4,73 @@ import sys
 import time
 from datetime import datetime
 
-import torch
-
-import matplotlib.pyplot as plt
 import numpy as np
 from fastdtw import fastdtw
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import MinMaxScaler
-from tslearn.preprocessing import TimeSeriesScalerMeanVariance
+from scipy.spatial.distance import cdist
 from tslearn.utils import to_time_series_dataset
-
 from cluster_result_analyze import cluster_result_save, cluster_result_quantification
 
+# ======================== 常量配置（集中管理，方便修改） ========================
 # 启用无缓冲输出，确保打印立即显示在日志中
 sys.stdout.flush()
 sys.stderr.flush()
 
-BASE_DIR = r'./cluster_data/microwave/'
+BASE_DIR = r'./cluster_data/washing_machine_freq'
+DATA_PATH = os.path.join(BASE_DIR, 'data.npy')
+FEATURES_PATH = os.path.join(BASE_DIR, 'bilstm_ae_features.npy')
+SEQ_LEN_PATH = os.path.join(BASE_DIR, 'seq_length.npy')
+DATA_MAPPING_FILE = os.path.join(BASE_DIR, 'data_mapping.json')
+EXTERN_TAG = 'low_freq_bilistm'     # 额外标签，在输出结果命名中添加额外的标签用于标识输出结果
+CLUSTER_METHOD = 'dbscan'
+
+CLUSTER_CONFIG = {
+    'dbscan': {
+        'method': 'dbscan',
+        'eps': 0.4,
+        'min_pts': 20,
+        'metric': 'euclidean',
+        'normalization_method': 'zscore'
+    },
+    'kmeans': {
+        'method': 'kmeans',
+        'n_neighbors': 5,
+        'algorithm': 'auto',
+        'metric': 'euclidean',
+        'normalization_method': 'zscore'
+    }
+}
 
 
-def fast_dtw_matrix_tslearn(ts_list, filename):
+# ======================== 距离矩阵计算相关函数（原有逻辑保留） ========================
+def compute_distance_matrix(data, metric='euclidean', metric_params=None):
+    """
+    计算距离矩阵
+
+    参数：
+        data (np.ndarray): 标准化后的特征数据 (n_sample, feature_dim)
+        metric (str): 距离度量（同DBSCAN的metric参数）
+        metric_params (dict): 距离度量的额外参数（如minkowski的p值）
+
+    返回：
+        distance_matrix (np.ndarray): 距离矩阵 (n_sample, n_sample)
+    """
+    print(f"计算{metric}距离矩阵...")
+    if metric == 'dtw':
+        return dtw_matrix_compute(data)
+    elif metric == 'fastdtw':
+        return fast_dtw_matrix_tslearn(data)
+    else:
+        # 处理度量参数（默认空字典）
+        metric_params = metric_params or {}
+        # 计算距离矩阵（cdist支持大部分常用距离）
+        distance_matrix = cdist(data, data, metric=metric, **metric_params)
+        print(f"距离矩阵形状: {distance_matrix.shape}")
+        return distance_matrix
+
+
+def fast_dtw_matrix_tslearn(ts_list):
     """
     使用tslearn库的cdist_dtw高效并行计算时间序列的DTW距离矩阵（底层C优化+多核并行）
 
@@ -40,8 +87,6 @@ def fast_dtw_matrix_tslearn(ts_list, filename):
 
     # 转换为tslearn格式
     X = to_time_series_dataset(ts_list)
-    # 批量归一化
-    # X = TimeSeriesScalerMeanVariance().fit_transform(X)
 
     print("开始计算DTW距离矩阵...")
     sys.stdout.flush()
@@ -49,11 +94,6 @@ def fast_dtw_matrix_tslearn(ts_list, filename):
     # 并行计算DTW矩阵（底层优化）
     from tslearn.metrics import cdist_dtw
     dist_matrix = cdist_dtw(X, n_jobs=-1)  # n_jobs=-1并行
-
-    # 保存计算结果到缓存
-    print(f"正在保存距离矩阵到缓存: {filename}")
-    np.save(filename, dist_matrix)
-    print(f"距离矩阵已保存到缓存文件: {filename}")
 
     elapsed_time = time.time() - start_time
     print(f"DTW距离矩阵计算完成！")
@@ -65,11 +105,7 @@ def fast_dtw_matrix_tslearn(ts_list, filename):
 
 
 def dtw_matrix_compute(ts_list):
-    """
-
-    :param ts_list:
-    :return:
-    """
+    """手动计算DTW距离矩阵（兼容标量的欧氏距离）"""
 
     # 自定义兼容标量的欧氏距离函数（解决ValueError）
     def scalar_euclidean(a, b):
@@ -77,7 +113,6 @@ def dtw_matrix_compute(ts_list):
         b = np.array(b)
         return np.linalg.norm(a - b)
 
-    # 手动计算DTW距离矩阵
     print(f"\n【DTW距离矩阵计算】")
     n = len(ts_list)
     distance_matrix = np.zeros((n, n))
@@ -115,149 +150,163 @@ def dtw_matrix_compute(ts_list):
     return distance_matrix
 
 
-def gpu_dtw_matrix_torch(ts_list, device="cuda:0"):
+# ======================== 数据加载与预处理 ========================
+def load_data(data_path: str, feature_path: str, seq_len_path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    PyTorch GPU加速DTW距离矩阵（批量并行，性能最优）
-    :param ts_list: 时间序列列表
-    :param device: GPU设备（默认cuda:0）
-    :return: 距离矩阵（CPU numpy数组）
+    加载特征数据和序列长度数据
+
+    参数：
+        data_path: 原始数据路径
+        feature_path: 特征数据路径
+        seq_len_path: 序列长度数据路径（seq_length.npy）
+
+    返回：
+        data_np: 原始特征数据
+        seq_len: 序列长度数组
     """
-    # 1. 数据预处理
-    X = to_time_series_dataset(ts_list)
-    n = len(X)
+    print(f"\n【数据源配置】")
+    print(f"原始数据路径: {data_path}")
+    print(f"特征数据路径: {feature_path}")
+    print(f"序列长度文件路径: {seq_len_path}")
 
-    # 2. 转移到GPU
-    X_tensor = torch.tensor(X, dtype=torch.float32).to(device)
-    # 统一序列长度（补0，不影响DTW结果）
-    max_len = max([len(ts) for ts in X])
-    X_padded = torch.zeros((n, max_len), dtype=torch.float32).to(device)
-    for i in range(n):
-        X_padded[i, :len(X[i])] = torch.tensor(X[i].flatten(), dtype=torch.float32).to(device)
-
-    # 3. 批量DTW计算（向量化+GPU并行）
-    dist_matrix = torch.zeros((n, n), dtype=torch.float32).to(device)
-    for i in range(n):
-        # 单次计算i与所有j的DTW（广播加速）
-        ts_i = X_padded[i:i + 1, :len(X[i])]
-        for j in range(i, n):
-            ts_j = X_padded[j:j + 1, :len(X[j])]
-
-            # PyTorch版DTW（优化的动态规划）
-            len1, len2 = ts_i.shape[1], ts_j.shape[1]
-            cost = torch.zeros((len1 + 1, len2 + 1), dtype=torch.float32).to(device)
-            cost[:, 0] = float('inf')
-            cost[0, :] = float('inf')
-            cost[0, 0] = 0.0
-
-            for a in range(1, len1 + 1):
-                for b in range(1, len2 + 1):
-                    cost[a, b] = torch.abs(ts_i[0, a - 1] - ts_j[0, b - 1]) + torch.min(
-                        torch.stack([cost[a - 1, b], cost[a, b - 1], cost[a - 1, b - 1]])
-                    )
-
-            dist_matrix[i, j] = cost[len1, len2]
-            dist_matrix[j, i] = cost[len1, len2]
-
-    # 4. GPU→CPU
-    return dist_matrix.cpu().numpy()
-
-
-def dbscan_dtw(ts_list, eps, min_pts):
-    """
-
-    :param ts_list:
-    :param eps:
-    :param min_pts:
-    :return:
-    """
-    n = len(ts_list)
-    dtw_matrix_filename = os.path.join(BASE_DIR, f'dist_matrix_{n}x{n}.npy')
-
-    # 检查是否存在缓存文件
-    if os.path.exists(dtw_matrix_filename):
-        print(f"发现缓存文件: {dtw_matrix_filename}，正在加载...")
-        dist_matrix = np.load(dtw_matrix_filename)
-        print(f"使用缓存，节省计算时间: 已跳过DTW距离矩阵计算")
-        sys.stdout.flush()
+    # 加载数据
+    data_np = np.load(data_path)
+    seq_len = np.load(seq_len_path)
+    
+    # 检查特征路径是否存在以及是否有效
+    feature_matrix = np.array([])  # 默认返回空数组
+    if feature_path is not None and os.path.exists(feature_path):
+        feature_matrix = np.load(feature_path)
+        if feature_matrix.size == 0:
+            print("警告: 特征数据文件存在但为空，将返回空的特征矩阵！")
+            feature_matrix = np.array([])
+        else:
+            print(f"成功加载特征数据，特征矩阵大小: {feature_matrix.shape}")
     else:
-        print(f"未发现缓存文件: {dtw_matrix_filename}，计算DTW距离矩阵...")
-        dist_matrix = fast_dtw_matrix_tslearn(ts_list, dtw_matrix_filename)
+        print(f"警告: 特征数据路径无效或不存在({feature_path})，将返回空的特征矩阵！")
+        
+    print(f"\n【数据加载】")
+    print(f"加载数据成功，原始数据大小: {data_np.shape}")
+    print(f"序列长度数组大小: {seq_len.shape}")
+    print(f"特征矩阵大小: {feature_matrix.shape}")
+    sys.stdout.flush()
+
+    if data_np.size == 0:
+        print("警告: 原始数据文件为空！")
+        sys.stdout.flush()
+        sys.exit(1)
+
+    return data_np, feature_matrix, seq_len
+
+
+def normalize_features(feature_matrix: np.ndarray, normalization_method: str = 'zscore') -> list[np.ndarray]:
+    """
+    特征归一化：全局归一化（专门针对特征矩阵）
+
+    参数：
+        feature_matrix: 特征矩阵，形状为 [样本数, 特征维度]
+        normalization_method: 归一化方法，可选 'minmax' 或 'zscore'，默认为 'zscore'
+            - 'minmax': Min-Max 归一化，将特征缩放到 [0, 1] 范围
+            - 'zscore': Z-Score 标准化，将特征标准化为均值0、标准差1（推荐）
+
+    返回：
+        normalized_feature_list: 归一化后的特征列表
+    """
+    print(f"\n【特征归一化】")
+    print(f"特征矩阵大小: {feature_matrix.shape if feature_matrix.size > 0 else 'Empty/None'}")
+    print(f"归一化方法: {normalization_method}")
+    sys.stdout.flush()
+
+    # 检查特征矩阵是否为空
+    if feature_matrix.size == 0:
+        print("警告: 特征矩阵为空，无法进行特征聚类，退出程序")
+        sys.exit(1)
+    else:
+        print("使用特征矩阵进行归一化")
+        data = feature_matrix
+
+    # 根据参数选择归一化方法
+    if normalization_method == 'minmax':
+        from sklearn.preprocessing import MinMaxScaler
+        scaler = MinMaxScaler()
+        print("使用 Min-Max 归一化（全局）")
+    elif normalization_method == 'zscore':
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        print("使用 Z-Score 标准化（全局）")
+    else:
+        raise ValueError(f"不支持的归一化方法: {normalization_method}，请选择 'minmax' 或 'zscore'")
+
+    # 全局归一化：所有样本一起计算归一化参数
+    normalized_features = scaler.fit_transform(data)
+
+    # 转换为列表格式
+    normalized_feature_list = [normalized_features[i] for i in range(len(normalized_features))]
+
+    # 打印归一化统计信息
+    print(f"归一化完成，有效序列数量: {len(normalized_feature_list)}")
+    print(f"归一化后范围: [{normalized_features.min():.4f}, {normalized_features.max():.4f}]")
+    print(f"归一化后均值: {normalized_features.mean():.4f}")
+    print(f"归一化后标准差: {normalized_features.std():.4f}")
+    sys.stdout.flush()
+    
+    return normalized_feature_list
+
+
+# ======================== 距离矩阵缓存与获取 ========================
+def get_distance_matrix(ts_list: list[np.ndarray], metric: str = 'euclidean') -> np.ndarray:
+    """
+    获取距离矩阵（直接计算）
+
+    参数：
+        ts_list: 时间序列列表
+        metric: 距离度量方式
+
+    返回：
+        dist_matrix: 距离矩阵
+    """
+    print(f"开始计算{metric}距离矩阵...")
+    sys.stdout.flush()
+    
+    # 直接计算距离矩阵
+    dist_matrix = compute_distance_matrix(ts_list, metric)
+    
+    print(f"{metric}距离矩阵计算完成！")
+    sys.stdout.flush()
+
+    return dist_matrix
+
+
+# ======================== DBSCAN聚类核心逻辑 ========================
+def run_dbscan(dist_matrix: np.ndarray, eps: float, min_pts: int) -> np.ndarray:
+    """
+    执行DBSCAN聚类（基于预计算的距离矩阵）
+
+    参数：
+        dist_matrix: 预计算的距离矩阵
+        eps: DBSCAN邻域半径
+        min_pts: 最小样本数
+
+    返回：
+        labels: 聚类标签（-1表示噪声点）
+    """
     print(f"\n【DBSCAN聚类】")
     print(f"聚类参数: eps={eps}, min_samples={min_pts}")
     sys.stdout.flush()
-    dbscan = DBSCAN(
-        eps=eps,  # 对应DTW距离的实际数值范围（需观察矩阵调整）
+
+    dbscan_model = DBSCAN(
+        eps=eps,
         min_samples=min_pts,
         metric="precomputed"
     )
     print("开始DBSCAN聚类...")
     sys.stdout.flush()
-    labels = dbscan.fit_predict(dist_matrix)
-    return labels, dist_matrix
+    labels = dbscan_model.fit_predict(dist_matrix)
 
-
-# 示例用法
-if __name__ == "__main__":
-    # 打印当前配置信息，确保立即输出
-    print("=" * 60)
-    print("DBSCAN Time Series Clustering")
-    print("=" * 60)
-    sys.stdout.flush()
-
-    # 数据源信息
-    data_path = BASE_DIR + 'data.npy'
-    seq_len_path = BASE_DIR + 'seq_length.npy'
-    print(f"\n【数据源配置】")
-    print(f"BASE_DIR: {BASE_DIR}")
-    print(f"数据文件路径: {data_path}")
-    print(f"序列长度文件路径: {seq_len_path}")
-    sys.stdout.flush()
-
-    # 加载数据
-    data_np = np.load(data_path)
-    print(f"\n【数据加载】")
-    print(f"加载数据成功，数据大小: {data_np.shape}")
-    sys.stdout.flush()
-
-    if data_np.size == 0:
-        print("警告: data.npy 是空文件")
-        sys.stdout.flush()
-        exit()
-    data = data_np[:, :, 0]
-    seq_len = np.load(seq_len_path)
-    time_series_data = []
-    normalized_ts_list = []
-
-    # 遍历data每一行，将i行的前seq_len[i]个数提取出来作为序列append到data_list中
-    print(f"\n【数据预处理】")
-    print(f"原始数据行数量: {len(data)}")
-    print(f"序列长度数组大小: {len(seq_len)}")
-    data = data[:300]
-    sys.stdout.flush()
-
-    for i in range(len(data)):
-        if seq_len[i] == 0:
-            continue
-        sequence = data[i][:seq_len[i]]  # 提取第i行的前seq_len[i]个数
-        time_series_data.append(sequence)
-
-        # 对当前序列进行归一化处理
-        min_max_scaler = MinMaxScaler()
-        # 将序列reshape为(n, 1)格式以适应MinMaxScaler
-        sequence_reshaped = sequence.reshape(-1, 1)
-        normalized_sequence = min_max_scaler.fit_transform(sequence_reshaped).flatten()
-        normalized_ts_list.append(normalized_sequence)
-
-    print(f"处理完成，有效序列数量: {len(normalized_ts_list)}")
-    sys.stdout.flush()
-
-    eps, min_pts = 0.9, 2
-    labels, dist_matrix = dbscan_dtw(normalized_ts_list, eps, min_pts)
-
-    # 5. 输出结果
-    print(f"\n【聚类结果】")
+    # 打印聚类基础结果
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise = np.sum(labels == -1)
+    print(f"\n【聚类结果统计】")
     print(f"聚类数量: {n_clusters}")
     print(f"噪声点数量: {n_noise}")
     print(f"各类别样本数分布:")
@@ -267,16 +316,44 @@ if __name__ == "__main__":
         print(f"  {label_name}: {count} 个样本")
     sys.stdout.flush()
 
-    # 输出文件配置
+    return labels
+
+
+# ======================== 结果评估与保存 ========================
+def evaluate_clustering(labels: np.ndarray, dist_matrix: np.ndarray, org_data: np.ndarray, feature_matrix: np.ndarray,
+                        save_dir: str, eps: float, min_pts: int) -> dict:
+    """
+    计算聚类评估指标并保存为JSON
+
+    参数：
+        labels: 聚类标签
+        dist_matrix: 距离矩阵
+        org_data: 原始数据
+        feature_matrix: 特征数据
+        save_dir: 评估指标保存目录
+
+    返回：
+        metrics: 评估指标字典
+    """
+    # 计算评估指标
+    sil_score, db_score, ch_score = cluster_result_quantification(
+        labels, dist_matrix, org_data, feature_matrix, save_dir
+    )
+
+    # 提取基础信息
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = np.sum(labels == -1)
     appliance_name = BASE_DIR.split('/')[2]
-    result_save_path = BASE_DIR + f'dbscan_result_{eps}_{min_pts}.npy'
-    visualize_save_path = f'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/dbscan_result_{eps}_{min_pts}.png'
-    cluster_result_dir = rf'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/'
 
-    sil_score, db_score, ch_score = cluster_result_quantification(labels, dist_matrix, data, f'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}/')
+    # 统计每个cluster的实例数量（包括噪声cluster）
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    cluster_distribution = {}
+    for label, count in zip(unique_labels, counts):
+        label_name = "noise" if label == -1 else f"cluster_{label}"
+        cluster_distribution[label_name] = int(count)
 
-    # 保存聚类评估指标到JSON文件
-    evaluation_metrics = {
+    # 构造指标字典
+    metrics = {
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "eps": str(eps),
         "min_pts": str(min_pts),
@@ -285,40 +362,108 @@ if __name__ == "__main__":
         "calinski_harabasz_score": str(ch_score),
         "appliance_name": appliance_name,
         "n_clusters": str(n_clusters),
-        "n_noise": str(n_noise)
+        "n_noise": str(n_noise),
+        "cluster_distribution": cluster_distribution
     }
 
-    # 确保目录存在
+    # 保存JSON
+    json_save_path = os.path.join(save_dir, "evaluation_metrics.json")
+    with open(json_save_path, 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
+    print(f"\n评估指标已保存到: {json_save_path}")
+    sys.stdout.flush()
+
+    return metrics
+
+
+def save_clustering_results(
+        data_np: np.ndarray,
+        seq_len: np.ndarray,
+        labels: np.ndarray,
+        eps: float,
+        min_pts: float
+) -> str:
+    """
+    保存聚类结果（分析文件、可视化等），保存每一个簇的前50个原始数据图像，而非特征提取结果
+
+    参数：
+        data_np: 原始数据数组
+        seq_len: 序列长度数组
+        labels: 聚类标签
+        eps: DBSCAN eps参数
+        min_pts: DBSCAN min_pts参数
+
+    返回：
+        cluster_result_dir: 结果保存目录
+    """
+    appliance_name = BASE_DIR.split('/')[2]
+    cluster_result_dir = rf'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}_{EXTERN_TAG}/'
+    labels_save_path = os.path.join(cluster_result_dir, f'cluster_labels.npy')
+
+    # 创建目录
     os.makedirs(cluster_result_dir, exist_ok=True)
 
-    # 保存JSON文件
-    json_save_path = os.path.join(cluster_result_dir, "evaluation_metrics.json")
-    with open(json_save_path, 'w', encoding='utf-8') as f:
-        json.dump(evaluation_metrics, f, ensure_ascii=False, indent=2)
+    # 循环遍历data_np的前len(labels)列，将其加入到data_list中
+    data_list = []
+    for i in range(min(len(labels), len(data_np))):
+        data_list.append(data_np[i])
+    
+    # 保存聚类分析结果，传入data_list用于可视化
+    cluster_result_save(data_list, seq_len, labels, save_dir=cluster_result_dir)
+    
+    # 保存labels数组
+    np.save(labels_save_path, labels)
+    print(f"聚类标签已保存到: {labels_save_path}")
 
-    print(f"\n【结果输出】")
+    # 打印保存路径
+    print(f"\n【结果输出路径】")
     print(f"设备名称: {appliance_name}")
-    print(f"结果保存路径: {result_save_path}")
-    print(f"可视化结果路径: {visualize_save_path}")
-    print(f"聚类结果分析目录: {cluster_result_dir}")
+    print(f"聚类结果文件: {labels_save_path}")
+    print(f"聚类分析目录: {cluster_result_dir}")
     sys.stdout.flush()
 
-    # 保存聚类分析结果
-    cluster_result_save(normalized_ts_list, seq_len, labels, save_dir=cluster_result_dir)
-    print(f"聚类分析结果已保存到: {cluster_result_dir}")
-    sys.stdout.flush()
+    return cluster_result_dir
 
-    # 保存聚类结果
-    np.save(result_save_path, labels)
-    print(f"聚类结果已保存到: {result_save_path}")
-    sys.stdout.flush()
 
-    # 可视化结果
-    visualize_clusters(normalized_ts_list, labels, eps, min_pts, save_file=visualize_save_path)
-    print(f"可视化结果已保存到: {visualize_save_path}")
-    sys.stdout.flush()
+# ======================== 主函数（串联所有流程） ========================
+def main():
+    """主函数：串联数据加载→预处理→距离矩阵→聚类→结果保存全流程"""
+    # 1. 加载配置项
+    config = CLUSTER_CONFIG[CLUSTER_METHOD]
 
+    # 2. 加载数据
+    data_np, features_matrix, seq_len = load_data(DATA_PATH, FEATURES_PATH, SEQ_LEN_PATH)
+
+    # 3. 特征归一化
+    normalization_method = config.get('normalization_method', 'zscore')
+    normalized_feature_list = normalize_features(features_matrix, normalization_method=normalization_method)
+
+    if CLUSTER_METHOD == 'dbscan':
+        # 4. 配置聚类参数
+        eps, min_pts = config['eps'], config['min_pts']
+
+        # 5. 获取距离矩阵
+        dist_matrix = get_distance_matrix(normalized_feature_list, metric=config['metric'])
+
+        # 6. 执行DBSCAN聚类
+        labels = run_dbscan(dist_matrix, eps, min_pts)
+
+        # 7. 保存聚类结果
+        cluster_result_dir = save_clustering_results(data_np, seq_len, labels, eps, min_pts)
+
+        # 8. 评估聚类结果
+        evaluate_clustering(labels, dist_matrix, data_np, features_matrix, cluster_result_dir, eps, min_pts)
+
+    elif CLUSTER_METHOD == 'kmeans':
+        pass
+
+
+    # 9. 结束
     print("\n" + "=" * 60)
     print("ALL DONE!")
     print("=" * 60)
     sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()

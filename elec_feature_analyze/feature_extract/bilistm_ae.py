@@ -2,7 +2,7 @@ import os
 
 import numpy as np
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, LSTM, RepeatVector, TimeDistributed, Dense, Masking
+from tensorflow.keras.layers import Input, LSTM, RepeatVector, TimeDistributed, Dense, Masking, Bidirectional  # 新增Bidirectional
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
@@ -36,8 +36,8 @@ data_file = "../time_clustering/cluster_data/washing_machine_freq/data_low_freq.
 seq_file = "../time_clustering/cluster_data/washing_machine_freq/seq_length.npy"
 result_dir = "../time_clustering/cluster_data/washing_machine_freq"
 
-data = np.load(data_file)
-seq_len = np.load(seq_file)
+data = np.load(data_file)[2].astype(np.float32)
+seq_len = np.load(seq_file).astype(np.int32)  # 明确指定整型
 
 # 【核心】选择单个特征作为模型输入（保留三维结构，适配LSTM的[样本数, 时间步, 特征数]要求）
 # 切片方式：[:, :, idx:idx+1] 保证输出仍为三维，避免变成二维
@@ -65,19 +65,23 @@ X = (X - X_min) / (X_max - X_min + 1e-7)
 scaled_mask_value = (0.0 - X_min) / (X_max - X_min + 1e-7)
 print(f"数据归一化完成 | 范围: {X.min():.2f} ~ {X.max():.2f} | 修正后的 Mask 值: {scaled_mask_value:.4f}")
 
-# ===================== 3. 构建带Masking的LSTM自编码器（适配不等长+单特征） =====================
+# ===================== 3. 构建带Masking的BiLSTM自编码器（适配不等长+单特征） =====================
 # 输入层：适配单特征的时序形状 (timesteps, 1)
 input_layer = Input(shape=(timesteps, n_features))
 
 # 关键：Masking层（忽略填充值，需和归一化后的填充值一致）
 masking_layer = Masking(mask_value=scaled_mask_value)(input_layer)
 
-# 编码器：LSTM编码（建议使用 tanh 激活函数，比 relu 更稳定）
-encoder_lstm = LSTM(32, activation='tanh', return_state=True)
-encoder_outputs, state_h, state_c = encoder_lstm(masking_layer)
-latent_features = Dense(latent_dim, activation='relu')(state_h)
+# ---------------------- 核心修改：单向LSTM → 双向LSTM（BiLSTM） ----------------------
+# 编码器：BiLSTM编码（双向LSTM，捕捉时序数据的前向+后向依赖，每个方向16单元，总参数量与原32单元单向一致）
+encoder_bilstm = Bidirectional(LSTM(16, activation='tanh', return_state=True))
+# BiLSTM返回值：output, forward_h, forward_c, backward_h, backward_c
+encoder_outputs, f_h, f_c, b_h, b_c = encoder_bilstm(masking_layer)
+# 合并双向LSTM的隐藏状态（前向h + 后向h），作为潜在特征的输入
+combined_h = tf.concat([f_h, b_h], axis=-1)
+latent_features = Dense(latent_dim, activation='relu')(combined_h)
 
-# 解码器
+# 解码器（保持不变，单向LSTM足够重构时序）
 decoder_input = RepeatVector(timesteps)(latent_features)
 decoder_lstm = LSTM(32, activation='tanh', return_sequences=True)
 decoder_outputs = decoder_lstm(decoder_input)
@@ -115,10 +119,10 @@ X_lstm_extracted_features = lstm_encoder_model.predict(X)
 
 # ===================== 结果输出 =====================
 print(f"\n原始单特征时序数据形状: {X.shape}")  # 输出 (n_samples, timesteps, 1)
-print(f"LSTM提取的特征形状: {X_lstm_extracted_features.shape}")  # 输出 (n_samples, latent_dim)
+print(f"BiLSTM提取的特征形状: {X_lstm_extracted_features.shape}")  # 输出 (n_samples, latent_dim)
 
 # ===================== 保存结果 =====================
 # 保存提取的LSTM特征到result目录
-feature_output_path = os.path.join(result_dir, "lstm_ae_features.npy")
+feature_output_path = os.path.join(result_dir, "bilstm_ae_features.npy")  # 重命名为bilstm区分
 np.save(feature_output_path, X_lstm_extracted_features)
 print(f"结果已保存到: {feature_output_path}")
