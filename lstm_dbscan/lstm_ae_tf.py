@@ -4,6 +4,9 @@ from tensorflow.keras.layers import Input, LSTM, RepeatVector, TimeDistributed, 
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+import os
 
 # 1. 查看TensorFlow版本
 print("TensorFlow版本：", tf.__version__)
@@ -27,6 +30,7 @@ epochs = 50
 batch_size = 32
 learning_rate = 0.001
 selected_feature_idx = 0  # 关键：选择第几个特征作为输入（索引从0开始，比如选第1个特征填0，第2个填1）
+do_visualize = True      # 是否生成并显示可视化图像
 
 # ===================== 2. 加载并预处理数据（适配不等长+单特征选择） =====================
 # 加载数据：data.npy是填充后的统一长度数据，seq_len.npy是每个样本的真实长度
@@ -116,5 +120,45 @@ print(f"LSTM提取的特征形状: {X_lstm_extracted_features.shape}")  # 输出
 # ===================== 保存结果 =====================
 # 保存提取的LSTM特征到result目录
 result_dir = "./lstm_dbscan/data_washing_machine/"
+if not os.path.exists(result_dir):
+    os.makedirs(result_dir)
 np.save(f"{result_dir}detsec_features.npy", X_lstm_extracted_features)
 print(f"结果已保存到: {result_dir}detsec_features.npy")
+
+# ===================== 6. 可视化：t-SNE 分布图 =====================
+if do_visualize:
+    print("\n正在生成 t-SNE 可视化...")
+    
+    # 对提取的特征进行 t-SNE 降维
+    tsne = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+    X_tsne = tsne.fit_transform(X_lstm_extracted_features)
+    
+    plt.figure(figsize=(12, 6))
+    
+    # 子图 1: t-SNE 特征分布
+    plt.subplot(1, 2, 1)
+    plt.scatter(X_tsne[:, 0], X_tsne[:, 1], alpha=0.6, c='blue', edgecolors='none', s=20)
+    plt.title("t-SNE Visualization of LSTM Latent Features")
+    plt.xlabel("t-SNE dimension 1")
+    plt.ylabel("t-SNE dimension 2")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    # 子图 2: 原始数据抽样展示 (展示前10个样本)
+    plt.subplot(1, 2, 2)
+    for i in range(min(10, n_samples)):
+        plt.plot(X[i, :seq_len[i], 0], alpha=0.7, label=f'Sample {i}')
+    plt.title("Original Time Series Samples (Normalized)")
+    plt.xlabel("Time Steps")
+    plt.ylabel("Value")
+    # plt.legend(loc='upper right', fontsize='small')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    
+    # 保存图像
+    plot_path = f"{result_dir}tsne_distribution.png"
+    plt.savefig(plot_path, dpi=300)
+    print(f"可视化图像已保存到: {plot_path}")
+    
+    # 显示图像
+    plt.show()

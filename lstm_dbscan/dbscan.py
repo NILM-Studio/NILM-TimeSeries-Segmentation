@@ -279,7 +279,7 @@ if __name__ == "__main__":
     print(f"处理完成，有效序列数量: {len(normalized_ts_list)}")
     sys.stdout.flush()
 
-    eps, min_pts = 0.0001, 1
+    eps, min_pts = 0.01, 5
     labels, dist_matrix = dbscan_dtw(normalized_ts_list, eps, min_pts)
 
     # 5. 计算聚类统计信息
