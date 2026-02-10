@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 
 # ===================== 1. 配置项（大写常量，统一管理） =====================
-ACTIVE_DIR = r"../../ukdale_disaggregate/clasp_seg/washing_machine_freq/data"
-CPS_DIR = r"../../ukdale_disaggregate/clasp_seg/washing_machine_freq/label"
-OUTPUT_DIR = r"./cluster_data/washing_machine_freq/"
-APPLIANCE_NAME = "washing_machine_freq"
+ACTIVE_DIR = r"../../ukdale_disaggregate/clasp_seg/microwave/data"
+CPS_DIR = r"../../ukdale_disaggregate/clasp_seg/microwave/label"
+OUTPUT_DIR = r"./cluster_data/microwave/"
+APPLIANCE_NAME = "microwave"
 '''
 可选DATA_COLUMN:
 - `power`: The original power value at the timestamp.
@@ -15,9 +15,17 @@ APPLIANCE_NAME = "washing_machine_freq"
 - `high_freq`: The high-frequency signal component by db4 wavelet decomposition.
 - `low_freq`: The low-frequency signal component by db4 wavelet decomposition.
 '''
-DATA_COLUMN = ['power', 'cleaned_power', 'high_freq', 'low_freq']
+DATA_COLUMN = ['timestamp', 'power', 'cleaned_power', 'high_freq', 'low_freq']
 CSV_ENCODING = "utf-8"  # 若报编码错，可改为"gbk"或"utf-8-sig"
 SAVE_NON_MATCH_FILE = True
+LABEL_TYPE = 0  # -1表示获取所有cps，0为融合cps，1为低频cps，2为高频cps
+
+label_dict = {
+    -1: "all",
+    0: "fusion",
+    1: "low_freq",
+    2: "high_freq",
+}
 
 
 # ===================== 2. 核心函数：以active文件为核心匹配+读取 =====================
@@ -25,7 +33,8 @@ def match_active_with_cps(label_type_filter=0):
     """
     核心逻辑：遍历active文件夹，匹配对应的CPS文件，读取active文件为DataFrame，构建匹配结果
     参数：
-        label_type_filter: int, 指定要获取的label_type值，-1表示获取所有cps
+        label_type_filter: int
+            指定要获取的label_type值，-1表示获取所有cps，0为融合cps，1为低频cps，2为高频cps
     返回：
         match_results: 列表[字典]，每个字典对应一个active文件的匹配+数据信息
     """
@@ -110,7 +119,7 @@ def cutting_data_by_cps():
     :return:
     """
     cut_data_list = []
-    match_results = match_active_with_cps()
+    match_results = match_active_with_cps(LABEL_TYPE)
     print("\n\n---------------MATCH FINISHED!-------------\n\n")
     for res in match_results:
         print(f"\n\nSegmenting Data:{res['data_file']}")
@@ -253,6 +262,12 @@ def save_file_for_cluster(extract_list=None):
     print(f"Max sequence length: {max_len}")
     print(f"Total samples: {n}")
     print(f"Extracted columns: {extract_list}")
+    
+    # 统计原始数据和切割数据的长度信息
+    print(f"\n{'=' * 50}")
+    print(f"Data Segmentation Statistics:")
+    print(f"Original data total length: {len(match_results)} segments")
+    print(f"Cut data total length: {len(cut_data_list)} segments")
     print(f"{'=' * 50}")
 
     return padded_array, lengths_array, cut_data_list
@@ -282,17 +297,17 @@ if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     # 保存为.npy文件
-    np.save(OUTPUT_DIR + 'data.npy', padded_array)
-    np.save(OUTPUT_DIR + 'seq_length.npy', lengths_array)
+    np.save(OUTPUT_DIR + f'data_{label_dict[LABEL_TYPE]}.npy', padded_array)
+    np.save(OUTPUT_DIR + f'seq_length_{label_dict[LABEL_TYPE]}.npy', lengths_array)
     print("Arrays saved successfully!")
-    print(f"Files saved: data.npy, seq_length.npy")
+    print(f"Files saved: data_{label_dict[LABEL_TYPE]}.npy, seq_length_{label_dict[LABEL_TYPE]}.npy")
 
     # 创建cluster_data目录（如果不存在）
     os.makedirs("cluster_data", exist_ok=True)
 
     # 保存mapping_list到JSON文件
-    with open(OUTPUT_DIR + "data_mapping_list.json", "w", encoding="utf-8") as f:
+    with open(OUTPUT_DIR + f"data_mapping_list_{label_dict[LABEL_TYPE]}.json", "w", encoding="utf-8") as f:
         json.dump(mapping_list, f, ensure_ascii=False, indent=4)
 
-    print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list.json")
+    print(f"Mapping list saved to {OUTPUT_DIR}/data_mapping_list_{label_dict[LABEL_TYPE]}.json")
     print(f"Total entries in mapping list: {len(mapping_list)}")

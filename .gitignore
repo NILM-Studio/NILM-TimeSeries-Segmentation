@@ -16,3 +16,4 @@ process_dataset/experiment_dataset/
 ukdale_disaggregate/
 nilm_metadata/
 ukdale.h5
+.vscode/
