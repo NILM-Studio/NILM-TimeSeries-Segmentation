@@ -29,13 +29,14 @@ from bilstm_ae_attantion import bilstm_ae_attention
 # ===================== 数据路径配置 =====================
 # 数据文件路径：包含时序数据的 numpy 数组文件
 # 数据形状应为 (n_samples, timesteps, n_features)
-data_file = "../time_clustering/cluster_data/dishwasher/data.npy"
+appliance_name = "washing_machine"  # 可选: "washing_machine", "dishwasher", "fridge"
+data_file = f"../time_clustering/cluster_data/{appliance_name}/data_fusion.npy"
 
 # 序列长度文件路径：包含每个样本的真实长度（用于不等长数据处理）
-seq_file = "../time_clustering/cluster_data/dishwasher/seq_length.npy"
+seq_file = f"../time_clustering/cluster_data/{appliance_name}/seq_length_fusion.npy"
 
 # 结果保存目录：提取的特征将保存在此目录
-result_dir = "../time_clustering/cluster_data/dishwasher/"
+result_dir = f"../time_clustering/cluster_data/{appliance_name}/"
 
 
 # ===================== 特征提取方法选择 =====================
@@ -43,7 +44,7 @@ result_dir = "../time_clustering/cluster_data/dishwasher/"
 # - "lstm_ae": LSTM 自编码器，输出全局特征 (n_samples, latent_dim)
 # - "bilstm_ae": BiLSTM 自编码器，输出全局特征 (n_samples, latent_dim)
 # - "bilstm_ae_attention": BiLSTM + Attention，输出时间步特征 (n_samples, timesteps, latent_dim)
-extract_model = "bilstm_ae"
+extract_model = "lstm_ae"
 
 
 # ===================== 模型配置参数 =====================
@@ -121,6 +122,8 @@ def run_feature_extract():
     n_features = data.shape[2]      # 特征数量（单特征时为1）
 
     # 打印数据信息
+    print("="*50)
+    print(f"对{appliance_name}数据进行特征提取")
     print(f"数据加载完成 | 总样本数: {n_samples} | 填充后时间步: {timesteps} | 输入特征数: {n_features}")
     print(f"样本真实长度范围: {np.min(seq_len)} ~ {np.max(seq_len)}")
     print(f"选择的特征索引: {column_name} | 输入数据最终形状: {data.shape}")
