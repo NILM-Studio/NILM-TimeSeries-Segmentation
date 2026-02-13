@@ -655,7 +655,8 @@ def cluster_result_quantification(
         dist_matrix: np.ndarray,
         org_data: np.ndarray,
         feature_matrix: np.ndarray,
-        save_dir: str | None = None
+        save_dir: str | None = None,
+        visualize: bool = True
 ) -> tuple[float | None, float | None, float | None]:
     """
     聚类结果量化主入口（整合预处理、指标计算、可视化），完全兼容原接口
@@ -683,7 +684,7 @@ def cluster_result_quantification(
     )
 
     # 3. 可视化（仅当有有效簇时执行）
-    if n_clusters >= 2:
+    if n_clusters >= 2 and visualize:
         visualize_cluster_results(
             cluster_labels=cluster_labels,
             valid_labels=valid_labels,

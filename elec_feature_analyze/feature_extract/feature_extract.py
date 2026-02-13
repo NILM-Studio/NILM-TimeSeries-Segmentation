@@ -29,10 +29,10 @@ from bilstm_ae_attantion import bilstm_ae_attention
 # ===================== 数据路径配置 =====================
 # 数据文件路径：包含时序数据的 numpy 数组文件
 # 数据形状应为 (n_samples, timesteps, n_features)
-data_file = "../time_clustering/cluster_data/dishwasher/data.npy"
+data_file = "../time_clustering/cluster_data/dishwasher/data_fusion.npy"
 
 # 序列长度文件路径：包含每个样本的真实长度（用于不等长数据处理）
-seq_file = "../time_clustering/cluster_data/dishwasher/seq_length.npy"
+seq_file = "../time_clustering/cluster_data/dishwasher/seq_length_fusion.npy"
 
 # 结果保存目录：提取的特征将保存在此目录
 result_dir = "../time_clustering/cluster_data/dishwasher/"
@@ -104,13 +104,14 @@ def run_feature_extract():
     print("GPU逻辑设备详情：", gpu_devices)
 
     # ===================== 2. 加载和预处理数据 =====================
-    # 加载数据文件
-    data = np.load(data_file)
+    # 加载原始数据文件（包含所有特征）
+    raw_data = np.load(data_file)
+    print(f"原始数据形状: {raw_data.shape}")
     
     # 选择指定的特征列并扩展维度
-    # data[:, :, columns_dict[column_name]]: 选择特定列，形状为 (n_samples, timesteps)
+    # raw_data[:, :, columns_dict[column_name]]: 选择特定列，形状为 (n_samples, timesteps)
     # np.expand_dims(..., axis=-1): 在最后添加一个维度，形状变为 (n_samples, timesteps, 1)
-    data = np.expand_dims(data[:, :, columns_dict[column_name]], axis=-1)
+    data = np.expand_dims(raw_data[:, :, columns_dict[column_name]], axis=-1)
     
     # 加载序列长度文件
     seq_len = np.load(seq_file).astype(np.int32)  # 明确指定整型
