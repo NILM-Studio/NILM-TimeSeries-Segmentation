@@ -11,18 +11,19 @@ from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import cdist
 from tslearn.utils import to_time_series_dataset
 from cluster_result_analyze import cluster_result_save, cluster_result_quantification
+import matplotlib.pyplot as plt
 
 # ======================== 常量配置（集中管理，方便修改） ========================
 # 启用无缓冲输出，确保打印立即显示在日志中
 sys.stdout.flush()
 sys.stderr.flush()
 
-BASE_DIR = r'./cluster_data/washing_machine_freq'
-DATA_PATH = os.path.join(BASE_DIR, 'data.npy')
-FEATURES_PATH = os.path.join(BASE_DIR, 'bilstm_ae_features.npy')
-SEQ_LEN_PATH = os.path.join(BASE_DIR, 'seq_length.npy')
-DATA_MAPPING_FILE = os.path.join(BASE_DIR, 'data_mapping.json')
-EXTERN_TAG = 'low_freq_bilistm'     # 额外标签，在输出结果命名中添加额外的标签用于标识输出结果
+BASE_DIR = r'./cluster_data/microwave'
+DATA_PATH = os.path.join(BASE_DIR, 'data_fusion.npy')
+FEATURES_PATH = os.path.join(BASE_DIR, 'bilstm_ae_features_cleaned_power_64_dim.npy')
+SEQ_LEN_PATH = os.path.join(BASE_DIR, 'seq_length_fusion.npy')
+DATA_MAPPING_FILE = os.path.join(BASE_DIR, 'data_mapping_fusion.json')
+EXTERN_TAG = 'bilistm'     # 额外标签，在输出结果命名中添加额外的标签用于标识输出结果
 CLUSTER_METHOD = 'dbscan'
 
 CLUSTER_CONFIG = {
@@ -425,38 +426,251 @@ def save_clustering_results(
     return cluster_result_dir
 
 
+# ======================== EPS扫描函数 ========================
+def scan_eps(data_np, features_matrix, config, save_dir=None,
+             eps_start=0.1, eps_end=2.0, eps_step=0.1):
+    """
+    扫描不同的eps值，计算综合Loss，找到最优eps
+    
+    参数：
+        data_np: 原始数据
+        features_matrix: 特征矩阵
+        config: 配置字典，包含以下键：
+            min_pts: 固定的min_pts参数
+            metric: 距离度量方法（可选）
+            normalization_method: 特征归一化方法（可选）
+        save_dir: 结果保存目录
+        eps_start: eps起始值
+        eps_end: eps结束值
+        eps_step: eps步长
+        
+    返回：
+        optimal_eps: 最优eps值
+        eps_results: 所有eps的评估结果
+    """
+    # 从配置中获取参数
+    min_pts = config['min_pts']
+    metric = config.get('metric', 'euclidean')
+    normalization_method = config.get('normalization_method', 'zscore')
+    
+    eps_values = np.arange(eps_start, eps_end + eps_step, eps_step)
+    eps_results = []
+    
+    print(f"\n【EPS扫描】开始扫描 eps 范围: [{eps_start}, {eps_end}]，步长: {eps_step}")
+    print(f"固定 min_pts: {min_pts}")
+    
+    # 1. 预计算归一化特征和距离矩阵（如果metric固定）
+    normalized_feature_list = normalize_features(features_matrix, normalization_method=normalization_method)
+    dist_matrix = get_distance_matrix(normalized_feature_list, metric=metric)
+    
+    # 2. 对每个eps执行聚类和评估
+    for eps in eps_values:
+        print(f"\n处理 eps = {eps:.2f}")
+        
+        # 执行DBSCAN聚类
+        labels = run_dbscan(dist_matrix, eps, min_pts)
+        
+        # 计算评估指标
+        n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+        n_noise = int(np.sum(labels == -1))
+        
+        # 调用现有的评估函数获取指标
+        temp_save_dir = f'./temp_eps_scan/{eps:.2f}/'
+        os.makedirs(temp_save_dir, exist_ok=True)
+        
+        sil_score, db_score, ch_score = cluster_result_quantification(
+            labels, dist_matrix, data_np, features_matrix, temp_save_dir, visualize=False
+        )
+        
+        # 计算转换后的Loss
+        loss_sil = 1 - sil_score if sil_score is not None else 1.0
+        loss_db = db_score if db_score is not None else 1.0
+        loss_ch = 1 / (ch_score + 1e-6) if ch_score is not None else 1.0
+        
+        eps_results.append({
+            'eps': eps,
+            'sil_score': sil_score,
+            'db_score': db_score,
+            'ch_score': ch_score,
+            'loss_sil': loss_sil,
+            'loss_db': loss_db,
+            'loss_ch': loss_ch,
+            'n_clusters': n_clusters,
+            'n_noise': n_noise
+        })
+    
+    # 3. 归一化Loss并计算综合Loss
+    if eps_results:
+        # 提取所有Loss值
+        loss_sil_values = [r['loss_sil'] for r in eps_results]
+        loss_db_values = [r['loss_db'] for r in eps_results]
+        loss_ch_values = [r['loss_ch'] for r in eps_results]
+        
+        # 计算每个Loss的最小值和最大值（用于归一化）
+        min_loss_sil, max_loss_sil = min(loss_sil_values), max(loss_sil_values)
+        min_loss_db, max_loss_db = min(loss_db_values), max(loss_db_values)
+        min_loss_ch, max_loss_ch = min(loss_ch_values), max(loss_ch_values)
+        
+        # 计算综合Loss
+        for r in eps_results:
+            # 归一化
+            r['loss_sil_norm'] = (r['loss_sil'] - min_loss_sil) / (max_loss_sil - min_loss_sil + 1e-6)
+            r['loss_db_norm'] = (r['loss_db'] - min_loss_db) / (max_loss_db - min_loss_db + 1e-6)
+            r['loss_ch_norm'] = (r['loss_ch'] - min_loss_ch) / (max_loss_ch - min_loss_ch + 1e-6)
+            
+            # 综合Loss（等权重）
+            r['comprehensive_loss'] = (r['loss_sil_norm'] + r['loss_db_norm'] + r['loss_ch_norm']) / 3
+    
+    # 4. 找到最优eps（综合Loss最小）
+    if eps_results:
+        optimal_result = min(eps_results, key=lambda x: x['comprehensive_loss'])
+        optimal_eps = optimal_result['eps']
+        print(f"\n【最优EPS】找到最优 eps = {optimal_eps:.2f}")
+        print(f"综合Loss: {optimal_result['comprehensive_loss']:.4f}")
+        print(f"对应指标: 轮廓系数={optimal_result['sil_score']:.4f}, DBI={optimal_result['db_score']:.4f}, CHI={optimal_result['ch_score']:.4f}")
+        print(f"簇数量: {optimal_result['n_clusters']}, 噪声点: {optimal_result['n_noise']}")
+    else:
+        optimal_eps = None
+    
+    # 5. 绘制Loss曲线
+    plot_loss_curve(eps_results, save_dir)
+    
+    return optimal_eps, eps_results
+
+
+def plot_loss_curve(eps_results, save_dir):
+    """绘制综合Loss曲线，标记最优eps，同时显示cluster数量和噪声点数量
+    
+    参数：
+        eps_results: eps扫描结果列表
+        save_dir: 结果保存目录
+    """
+    if not eps_results:
+        return
+    
+    eps_values = [r['eps'] for r in eps_results]
+    comprehensive_losses = [r['comprehensive_loss'] for r in eps_results]
+    n_clusters = [r['n_clusters'] for r in eps_results]
+    n_noise = [r['n_noise'] for r in eps_results]
+    
+    # 找到最小Loss的索引
+    min_loss_idx = np.argmin(comprehensive_losses)
+    optimal_eps = eps_values[min_loss_idx]
+    min_loss = comprehensive_losses[min_loss_idx]
+    
+    # 创建子图
+    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
+    
+    # 子图1: 综合Loss曲线
+    axes[0].plot(eps_values, comprehensive_losses, 'b-o', label='Comprehensive Loss')
+    axes[0].scatter([optimal_eps], [min_loss], color='r', s=100, label=f'Optimal eps={optimal_eps:.2f}')
+    axes[0].set_title('Comprehensive Loss vs eps (DBSCAN)')
+    axes[0].set_xlabel('eps')
+    axes[0].set_ylabel('Comprehensive Loss')
+    axes[0].grid(True)
+    axes[0].legend()
+    
+    # 子图2: 簇数量随eps变化
+    axes[1].plot(eps_values, n_clusters, 'g-o', label='Number of Clusters')
+    axes[1].axvline(x=optimal_eps, color='r', linestyle='--', alpha=0.5, label=f'Optimal eps={optimal_eps:.2f}')
+    axes[1].set_title('Number of Clusters vs eps')
+    axes[1].set_xlabel('eps')
+    axes[1].set_ylabel('Number of Clusters')
+    axes[1].grid(True)
+    axes[1].legend()
+    
+    # 子图3: 噪声点数量随eps变化
+    axes[2].plot(eps_values, n_noise, 'm-o', label='Number of Noise Points')
+    axes[2].axvline(x=optimal_eps, color='r', linestyle='--', alpha=0.5, label=f'Optimal eps={optimal_eps:.2f}')
+    axes[2].set_title('Number of Noise Points vs eps')
+    axes[2].set_xlabel('eps')
+    axes[2].set_ylabel('Number of Noise Points')
+    axes[2].grid(True)
+    axes[2].legend()
+    
+    plt.tight_layout()
+    
+    # 保存图像
+    os.makedirs(save_dir, exist_ok=True)
+    plt.savefig(os.path.join(save_dir, 'eps_scan_comprehensive.png'), dpi=300)
+    plt.show()
+    
+    print(f"综合分析图已保存到: {os.path.join(save_dir, 'eps_scan_comprehensive.png')}")
+
+
 # ======================== 主函数（串联所有流程） ========================
 def main():
     """主函数：串联数据加载→预处理→距离矩阵→聚类→结果保存全流程"""
     # 1. 加载配置项
     config = CLUSTER_CONFIG[CLUSTER_METHOD]
-
+    
     # 2. 加载数据
     data_np, features_matrix, seq_len = load_data(DATA_PATH, FEATURES_PATH, SEQ_LEN_PATH)
-
-    # 3. 特征归一化
-    normalization_method = config.get('normalization_method', 'zscore')
-    normalized_feature_list = normalize_features(features_matrix, normalization_method=normalization_method)
-
+    
     if CLUSTER_METHOD == 'dbscan':
-        # 4. 配置聚类参数
-        eps, min_pts = config['eps'], config['min_pts']
-
-        # 5. 获取距离矩阵
-        dist_matrix = get_distance_matrix(normalized_feature_list, metric=config['metric'])
-
-        # 6. 执行DBSCAN聚类
-        labels = run_dbscan(dist_matrix, eps, min_pts)
-
-        # 7. 保存聚类结果
-        cluster_result_dir = save_clustering_results(data_np, seq_len, labels, eps, min_pts)
-
-        # 8. 评估聚类结果
-        evaluate_clustering(labels, dist_matrix, data_np, features_matrix, cluster_result_dir, eps, min_pts)
+        # 检查是否需要扫描eps
+        scan_eps_flag = True  # 设置为True启用扫描
+        
+        if scan_eps_flag:
+            # 执行EPS扫描
+            appliance_name = os.path.basename(BASE_DIR.rstrip(os.sep))
+            save_dir = f'./cluster_data/dbscan_result/{appliance_name}/eps_scan/'
+            optimal_eps, eps_results = scan_eps(
+                data_np, features_matrix, 
+                config=config,
+                save_dir=save_dir,
+                eps_start=0.02,
+                eps_end=2.0,
+                eps_step=0.02
+            )
+            
+            # 保存扫描结果
+            os.makedirs(save_dir, exist_ok=True)
+            
+            # 1. 先保存最佳的eps以及其相关结果
+            optimal_result = next((r for r in eps_results if r['eps'] == optimal_eps), None)
+            if optimal_result:
+                optimal_eps_data = {
+                    'optimal_eps': optimal_eps,
+                    'optimal_result': optimal_result,
+                    'scan_parameters': {
+                        'min_pts': config['min_pts'],
+                        'eps_start': 0.1,
+                        'eps_end': 2.0,
+                        'eps_step': 0.1,
+                        'metric': config.get('metric', 'euclidean')
+                    }
+                }
+                with open(os.path.join(save_dir, 'optimal_eps_result.json'), 'w', encoding='utf-8') as f:
+                    json.dump(optimal_eps_data, f, ensure_ascii=False, indent=2)
+                print(f"最佳EPS结果已保存到: {os.path.join(save_dir, 'optimal_eps_result.json')}")
+            
+            # 2. 再保存各个eps对应的结果
+            with open(os.path.join(save_dir, 'eps_scan_results.json'), 'w', encoding='utf-8') as f:
+                json.dump(eps_results, f, ensure_ascii=False, indent=2)
+            print(f"所有EPS扫描结果已保存到: {os.path.join(save_dir, 'eps_scan_results.json')}")
+        else:
+            # 原有逻辑：使用固定eps
+            eps, min_pts = config['eps'], config['min_pts']
+            
+            # 3. 特征归一化
+            normalization_method = config.get('normalization_method', 'zscore')
+            normalized_feature_list = normalize_features(features_matrix, normalization_method=normalization_method)
+            
+            # 4. 获取距离矩阵
+            dist_matrix = get_distance_matrix(normalized_feature_list, metric=config['metric'])
+            
+            # 5. 执行DBSCAN聚类
+            labels = run_dbscan(dist_matrix, eps, min_pts)
+            
+            # 6. 保存聚类结果
+            cluster_result_dir = save_clustering_results(data_np, seq_len, labels, eps, min_pts)
+            
+            # 7. 评估聚类结果
+            evaluate_clustering(labels, dist_matrix, data_np, features_matrix, cluster_result_dir, eps, min_pts)
 
     elif CLUSTER_METHOD == 'kmeans':
         pass
-
 
     # 9. 结束
     print("\n" + "=" * 60)

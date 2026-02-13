@@ -105,13 +105,14 @@ def run_feature_extract():
     print("GPU逻辑设备详情：", gpu_devices)
 
     # ===================== 2. 加载和预处理数据 =====================
-    # 加载数据文件
-    data = np.load(data_file)
+    # 加载原始数据文件（包含所有特征）
+    raw_data = np.load(data_file)
+    print(f"原始数据形状: {raw_data.shape}")
     
     # 选择指定的特征列并扩展维度
-    # data[:, :, columns_dict[column_name]]: 选择特定列，形状为 (n_samples, timesteps)
+    # raw_data[:, :, columns_dict[column_name]]: 选择特定列，形状为 (n_samples, timesteps)
     # np.expand_dims(..., axis=-1): 在最后添加一个维度，形状变为 (n_samples, timesteps, 1)
-    data = np.expand_dims(data[:, :, columns_dict[column_name]], axis=-1)
+    data = np.expand_dims(raw_data[:, :, columns_dict[column_name]], axis=-1)
     
     # 加载序列长度文件
     seq_len = np.load(seq_file).astype(np.int32)  # 明确指定整型
