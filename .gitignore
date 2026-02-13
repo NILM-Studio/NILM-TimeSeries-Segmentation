@@ -5,6 +5,7 @@ exp_pic/
 elec_feature_analyze/time_clustering/cluster_data/
 elec_feature_analyze/analyze_result/
 elec_feature_analyze/feature_extract/timesfm_cache/
+elec_feature_analyze/feature_extract/slurm_log/
 # 数据集
 process_dataset/Air-condition/
 process_dataset/WashMachine/
@@ -17,3 +18,5 @@ ukdale_disaggregate/
 nilm_metadata/
 ukdale.h5
 .vscode/
+
+__pycache__/
