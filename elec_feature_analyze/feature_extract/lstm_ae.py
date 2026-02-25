@@ -33,17 +33,21 @@ def lstm_ae(data: np.ndarray, config: dict):
                       - patience (int): 早停耐心值，默认5
     
     Returns:
-        np.ndarray: 提取的特征，形状为 (n_samples, latent_dim)
-                    - n_samples: 样本数量
-                    - latent_dim: 特征维度（潜空间维度）
+        tuple: (features, training_history)
+            features (np.ndarray): 提取的特征，形状为 (n_samples, latent_dim)
+            training_history (dict): 训练过程的历史信息，包含：
+                - loss: 训练损失
+                - val_loss: 验证损失
+                - epochs_trained: 实际训练轮数
     
     Example:
         >>> import numpy as np
         >>> data = np.random.rand(100, 50, 1)  # 100个样本，50个时间步，1个特征
         >>> config = {"latent_dim": 64, "epochs": 50, "batch_size": 32, 
         ...           "learning_rate": 0.001, "patience": 5}
-        >>> features = lstm_ae(data, config)
+        >>> features, history = lstm_ae(data, config)
         >>> print(features.shape)  # (100, 64)
+        >>> print(history.keys())  # dict_keys(['loss', 'val_loss', 'epochs_trained'])
     """
     # ===================== 1. 解析配置参数 =====================
     latent_dim = config["latent_dim"]  # 潜空间特征维度
@@ -146,4 +150,12 @@ def lstm_ae(data: np.ndarray, config: dict):
     print(f"\n原始单特征时序数据形状: {X.shape}")  # 输出 (n_samples, timesteps, n_features)
     print(f"LSTM提取的特征形状: {X_lstm_extracted_features.shape}")  # 输出 (n_samples, latent_dim)
     
-    return X_lstm_extracted_features
+    # 构建训练历史信息字典
+    training_history = {
+        'loss': history.history['loss'],
+        'val_loss': history.history['val_loss'],
+        'epochs_trained': len(history.history['loss']),
+        'model_name': 'LSTM'
+    }
+    
+    return X_lstm_extracted_features, training_history

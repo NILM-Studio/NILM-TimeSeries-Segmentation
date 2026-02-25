@@ -305,7 +305,7 @@ def cluster_result_analyze(data_info_list, cluster_dict):
             print("无效的输入")
 
 
-def cluster_result_save(data_array, seq_length, cluster_result, save_dir, threshold=200):
+def cluster_result_save(data_array, seq_length, cluster_result, save_dir, threshold=200, col_index=1):
     """
     保存聚类结果，按照cluster保存所有的聚类结果，将所有时间序列片段可视化并且保存到其对应的
     cluster_id的文件夹下
@@ -350,7 +350,7 @@ def cluster_result_save(data_array, seq_length, cluster_result, save_dir, thresh
         # 收集该cluster的所有数据
         cluster_data = []
         for idx, data_idx in enumerate(indices):
-            data = data_array[data_idx][:seq_length[data_idx]]
+            data = data_array[data_idx][:seq_length[data_idx]][:, col_index]
             cluster_data.append(data)
 
             # 保存该cluster的每个数据项
@@ -458,8 +458,10 @@ def visualize_cluster_results(
         valid_labels: np.ndarray,
         valid_org_data: np.ndarray,
         feature_matrix: np.ndarray,
+        org_data: np.ndarray,  # 新增原始时序数据参数，用于噪声点可视化
         save_dir: str | None = None,
         dist_method: str = 'dtw',
+        col_index: int = 1,
         sampling_threshold: int = 200  # 新增采样阈值参数
 ) -> None:
     """
@@ -467,18 +469,19 @@ def visualize_cluster_results(
     - 簇中心轮廓图 → 用valid_org_data（原始时序数据）
     - tSNE降维图 → 用feature_matrix（特征矩阵）
     - 每个簇的前sampling_threshold个数据堆叠可视化 → 用valid_org_data（原始时序数据）
+    - 噪声点堆叠可视化 → 用org_data（原始时序数据）
     :param dist_method: 距离计算方法
     :param cluster_labels: 原始聚类标签（含噪声点-1）
     :param valid_labels: 过滤噪声后的聚类标签
     :param valid_org_data: 过滤噪声后的原始时序数据（簇中心用）
     :param feature_matrix: 完整特征矩阵（含噪声点，tSNE用）
+    :param org_data: 完整原始时序数据（含噪声点，用于噪声点可视化）
     :param save_dir: 可视化结果保存目录（None则不保存）
     :param sampling_threshold: 当簇中样本数量超过此阈值时，将进行采样以避免计算失败
     """
+    valid_org_data = valid_org_data[:, :, col_index]
+    org_data = org_data[:, :, col_index]  # 对原始数据也提取相同的列索引，用于噪声点可视化
     n_clusters = len(np.unique(valid_labels))
-    if n_clusters < 2:
-        print("⚠️ 聚类簇数量<2，跳过可视化！")
-        return
 
     print(f"开始可视化 {n_clusters} 个聚类的结果...")
 
@@ -550,20 +553,22 @@ def visualize_cluster_results(
     # ========== 2. 绘制所有簇的前sampling_threshold个数据堆叠可视化图（整合到一张图中） ==========
     print("步骤2: 开始绘制所有簇的前sampling_threshold个数据堆叠图...")
 
-    # 计算子图布局
-    n_cols = min(3, n_clusters)  # 最多3列
-    n_rows = (n_clusters + n_cols - 1) // n_cols  # 计算所需行数
+    # 计算子图布局（包括噪声点）
+    total_plots = n_clusters + 1  # 有效簇 + 噪声点
+    n_cols = min(3, total_plots)  # 最多3列
+    n_rows = (total_plots + n_cols - 1) // n_cols  # 计算所需行数
 
     # 创建整体图形
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-    fig.suptitle('各簇数据堆叠可视化', fontsize=16, fontweight='bold')
+    fig.suptitle('各簇数据堆叠可视化（含噪声点）', fontsize=16, fontweight='bold')
 
     # 处理单子图情况
-    if n_clusters == 1:
+    if total_plots == 1:
         axes = [axes]
     else:
-        axes = axes.flatten() if n_clusters > 1 else [axes]
+        axes = axes.flatten() if total_plots > 1 else [axes]
 
+    # 绘制有效簇
     for i, cluster_id in enumerate(np.unique(valid_labels)):
         print(f"  正在处理簇 {cluster_id} 的数据堆叠可视化...")
         cluster_mask = valid_labels == cluster_id
@@ -592,8 +597,41 @@ def visualize_cluster_results(
                          transform=axes[i].transAxes, fontsize=12)
             axes[i].set_title(f'簇 {cluster_id} - 无数据', fontsize=12)
 
+    # 绘制噪声点 (-1)
+    noise_idx = cluster_labels == -1
+    noise_seq = valid_org_data[0:0]  # 初始化空数组
+    if np.sum(noise_idx) > 0:
+        # 获取噪声点的原始数据
+        noise_seq = org_data[noise_idx]
+        print(f"  正在处理噪声点的可视化，共有 {len(noise_seq)} 个噪声点...")
+        
+        # 限制要可视化的数据量为前sampling_threshold个
+        if len(noise_seq) > sampling_threshold:
+            noise_seq_subset = noise_seq[:sampling_threshold]
+            print(f"    噪声点包含 {len(noise_seq)} 个样本，将可视化前 {sampling_threshold} 个样本")
+        else:
+            noise_seq_subset = noise_seq
+            print(f"    噪声点包含 {len(noise_seq)} 个样本，全部可视化")
+        
+        # 在最后一个子图中绘制噪声点
+        noise_ax = axes[n_clusters]
+        for j, series in enumerate(noise_seq_subset):
+            noise_ax.plot(series, alpha=0.6, color='gray', label=f'Noise {j}' if j < 3 else "")  # 用灰色绘制噪声点
+        
+        noise_ax.set_title(f'Noise Points (-1) (前{len(noise_seq_subset)}个数据)', fontsize=12)
+        noise_ax.set_xlabel('时间步 / 序列长度', fontsize=10)
+        noise_ax.set_ylabel('时序数值', fontsize=10)
+        noise_ax.grid(alpha=0.3, linestyle='--')
+    else:
+        # 如果没有噪声点，显示无噪声点信息
+        noise_ax = axes[n_clusters]
+        noise_ax.text(0.5, 0.5, '无噪声点',
+                     horizontalalignment='center', verticalalignment='center',
+                     transform=noise_ax.transAxes, fontsize=12)
+        noise_ax.set_title('噪声点 (-1) - 无数据', fontsize=12)
+
     # 隐藏多余的子图
-    for j in range(i + 1, len(axes)):
+    for j in range(total_plots, len(axes)):
         axes[j].set_visible(False)
 
     # 保存堆叠图
@@ -656,6 +694,7 @@ def cluster_result_quantification(
         org_data: np.ndarray,
         feature_matrix: np.ndarray,
         save_dir: str | None = None,
+        col_index: int = 1,
         visualize: bool = True
 ) -> tuple[float | None, float | None, float | None]:
     """
@@ -684,13 +723,15 @@ def cluster_result_quantification(
     )
 
     # 3. 可视化（仅当有有效簇时执行）
-    if n_clusters >= 2 and visualize:
+    if visualize:
         visualize_cluster_results(
             cluster_labels=cluster_labels,
             valid_labels=valid_labels,
             valid_org_data=valid_org_data,
             feature_matrix=feature_matrix,
-            save_dir=save_dir
+            org_data=org_data,  # 传入原始时序数据，用于噪声点可视化
+            save_dir=save_dir,
+            col_index=col_index
         )
 
     return sil_score, db_score, ch_score
@@ -700,14 +741,14 @@ if __name__ == '__main__':
     # # data_info_list, cluster_dict = read_detsec_result()
     # # cluster_result_analyze(data_info_list, cluster_dict)
     TIME_UNITS = 'months'
-    DATA_DIR = r'./cluster_data/washing_machine_freq/'
-    ANALYZE_DIR = r'./cluster_data/dbscan_result/washing_machine_freq/0.1_20_low_freq_bilistm/'
-    with open(DATA_DIR + 'data_mapping_list.json', 'r', encoding='utf-8') as file:
+    DATA_DIR = r'./cluster_data/washing_machine/'
+    ANALYZE_DIR = r'./cluster_data/dbscan_result/washing_machine/0.6_20_bilistm/'
+    with open(DATA_DIR + 'data_mapping_list_fusion.json', 'r', encoding='utf-8') as file:
         mapping_list = json.load(file)
 
-    data = np.load(r'./cluster_data/washing_machine_freq/' + 'data.npy')
-    cluster_result = np.load(ANALYZE_DIR + 'cluster_result_0.1_20_low_freq_bilistm.npy')
-    seq_len = np.load(DATA_DIR + 'seq_length.npy')
+    data = np.load(DATA_DIR + 'data_fusion.npy')
+    cluster_result = np.load(ANALYZE_DIR + 'cluster_labels.npy')
+    seq_len = np.load(DATA_DIR + 'seq_length_fusion.npy')
 
     # 打印各个数组的形状以便调试
     print(f"data shape: {data.shape}")
@@ -726,7 +767,6 @@ if __name__ == '__main__':
         plt.show()
 
         # 保存图表
-        save_path = './cluster_data/dbscan_result/washing_machine_freq/0.1_20_low_freq_bilistm/' + \
-                    f'cluster_time_axis_visualization_{TIME_UNITS}.png'
+        save_path = ANALYZE_DIR + f'cluster_time_axis_visualization_{TIME_UNITS}.png'
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"图表已保存到: {save_path}")

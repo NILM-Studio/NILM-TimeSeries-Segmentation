@@ -18,6 +18,9 @@
 """
 
 import os
+import json
+import datetime
+import matplotlib.pyplot as plt
 
 import numpy as np
 import tensorflow as tf
@@ -81,20 +84,75 @@ EXTERNAL_TAG = f'_{model_config["latent_dim"]}_dim'
 feature_file_name = f"{extract_model}_features_{column_name}{EXTERNAL_TAG}.npy"
 
 
+def visualize_training_history(training_history, model_name, result_dir):
+    """
+    可视化训练历史并保存为JSON文件
+    
+    Args:
+        training_history (dict): 训练历史信息
+        model_name (str): 模型名称
+        result_dir (str): 结果保存目录
+    """
+    plt.figure(figsize=(10, 6))
+    
+    # 绘制训练损失和验证损失
+    plt.plot(training_history['loss'], label='Training Loss')
+    plt.plot(training_history['val_loss'], label='Validation Loss')
+    
+    plt.title(f'Training History - {model_name}')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss (MSE)')
+    plt.legend()
+    plt.grid(True)
+    
+    # 保存可视化结果
+    save_dir = os.path.join(result_dir, 'training_history')
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 保存PNG文件
+    save_path = os.path.join(save_dir, f'{model_name}_training_history.png')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"训练历史可视化已保存到: {save_path}")
+    
+    plt.close()
+    
+    # 保存训练历史为JSON文件
+    json_save_path = os.path.join(save_dir, f'{model_name}_training_history.json')
+    with open(json_save_path, 'w', encoding='utf-8') as f:
+        json.dump(training_history, f, indent=4, ensure_ascii=False)
+    print(f"训练历史JSON文件已保存到: {json_save_path}")
+
+
 def run_feature_extract():
     """
     执行特征提取的主函数
     
     该函数执行以下步骤：
-    1. 打印 TensorFlow 和 GPU 信息
-    2. 加载和预处理数据
-    3. 根据选择的模型提取特征
-    4. 保存提取的特征到文件
+    1. 生成时间戳并创建结果目录
+    2. 打印 TensorFlow 和 GPU 信息
+    3. 加载和预处理数据
+    4. 根据选择的模型提取特征
+    5. 保存提取的特征到文件
+    6. 可视化训练历史
+    
+    Returns:
+        dict: 包含特征提取结果和训练历史的字典
     
     Raises:
         ValueError: 当 extract_model 不是支持的模型时
     """
-    # ===================== 1. 打印 TensorFlow 和 GPU 信息 =====================
+    # ===================== 1. 生成时间戳并创建结果目录 =====================
+    # 生成时间戳（年月日时分秒）
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    print(f"当前时间戳: {timestamp}")
+    
+    # 创建带时间戳的结果目录
+    timestamp_result_dir = os.path.join(result_dir, f'feature_extract_{timestamp}')
+    os.makedirs(timestamp_result_dir, exist_ok=True)
+    print(f"结果将保存到: {timestamp_result_dir}")
+    print("="*70)
+
+    # ===================== 2. 打印 TensorFlow 和 GPU 信息 =====================
     print("TensorFlow版本：", tf.__version__)
     print("="*50)
     print("是否检测到GPU：", tf.config.list_physical_devices('GPU'))
@@ -103,7 +161,7 @@ def run_feature_extract():
     gpu_devices = tf.config.list_logical_devices('GPU')
     print("GPU逻辑设备详情：", gpu_devices)
 
-    # ===================== 2. 加载和预处理数据 =====================
+    # ===================== 3. 加载和预处理数据 =====================
     # 加载原始数据文件（包含所有特征）
     raw_data = np.load(data_file)
     print(f"原始数据形状: {raw_data.shape}")
@@ -130,25 +188,25 @@ def run_feature_extract():
     if extract_model == "bilstm_ae":
         print("\n使用 BiLSTM 自编码器进行特征提取...")
         print("输出特征形状: (n_samples, latent_dim) - 全局潜空间特征")
-        feature = bilstm_ae(data, model_config)
+        feature, training_history = bilstm_ae(data, model_config)
         
     elif extract_model == "lstm_ae":
         print("\n使用 LSTM 自编码器进行特征提取...")
         print("输出特征形状: (n_samples, latent_dim) - 全局潜空间特征")
-        feature = lstm_ae(data, model_config)
+        feature, training_history = lstm_ae(data, model_config)
         
     elif extract_model == "bilstm_ae_attention":
         print("\n使用 BiLSTM + Attention 自编码器进行特征提取...")
         print("输出特征形状: (n_samples, timesteps, latent_dim) - 时间步级别特征")
-        feature = bilstm_ae_attention(data, model_config)
+        feature, training_history = bilstm_ae_attention(data, model_config)
         
     else:
         raise ValueError(f"不支持的提取模型: {extract_model}。"
                         f"可选值: 'lstm_ae', 'bilstm_ae', 'bilstm_ae_attention'")
 
-    # ===================== 4. 保存提取的特征 =====================
+    # ===================== 5. 保存提取的特征 =====================
     # 构建完整的输出路径
-    feature_output_path = os.path.join(result_dir, feature_file_name)
+    feature_output_path = os.path.join(timestamp_result_dir, feature_file_name)
     
     # 保存特征到 numpy 文件
     np.save(feature_output_path, feature)
@@ -156,6 +214,22 @@ def run_feature_extract():
     print(f"\n特征提取完成！")
     print(f"特征形状: {feature.shape}")
     print(f"结果已保存到: {feature_output_path}")
+    
+    # ===================== 6. 可视化训练历史 =====================
+    print("\n可视化训练历史...")
+    visualize_training_history(training_history, extract_model, timestamp_result_dir)
+    
+    # 构建结果字典
+    result = {
+        'feature_path': feature_output_path,
+        'feature_shape': feature.shape,
+        'training_history': training_history,
+        'model_name': extract_model,
+        'timestamp': timestamp,
+        'result_dir': timestamp_result_dir
+    }
+    
+    return result
 
 
 if __name__ == "__main__":
@@ -165,4 +239,21 @@ if __name__ == "__main__":
     当直接运行此脚本时，执行特征提取流程。
     可以通过修改脚本顶部的配置变量来调整参数。
     """
-    run_feature_extract()
+    result = run_feature_extract()
+    
+    # 打印训练历史摘要
+    print("\n=== 训练历史摘要 ===")
+    print(f"模型名称: {result['model_name']}")
+    print(f"实际训练轮数: {result['training_history']['epochs_trained']}")
+    print(f"最终训练损失: {result['training_history']['loss'][-1]:.6f}")
+    print(f"最终验证损失: {result['training_history']['val_loss'][-1]:.6f}")
+    
+    # 计算损失改进率
+    initial_loss = result['training_history']['loss'][0]
+    final_loss = result['training_history']['loss'][-1]
+    improvement_rate = ((initial_loss - final_loss) / initial_loss) * 100
+    print(f"损失改进率: {improvement_rate:.2f}%")
+    
+    print("\n=== 工作流完成 ===")
+    print(f"特征文件路径: {result['feature_path']}")
+    print(f"特征形状: {result['feature_shape']}")

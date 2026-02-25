@@ -1,8 +1,9 @@
-from runpy import run_path
-import json, os
-import pandas as pd
-import numpy as np
+import json
+import os
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from matplotlib.patches import Patch
 
 
@@ -75,6 +76,9 @@ def visualize_significantly_low_points(cluster_df_list, title=None, titles=None,
     
     # 遍历每个聚类DataFrame绘制子图
     for i, (cluster_df, ax) in enumerate(zip(cluster_df_list, axes)):
+        # 获取实际的cluster_id（从DataFrame的name属性获取）
+        actual_cluster_id = getattr(cluster_df, 'name', str(i))
+        
         # 获取数据
         duration_list = cluster_df['interval_total_duration']
         is_significantly_low = cluster_df['is_significantly_low']
@@ -128,8 +132,8 @@ def visualize_significantly_low_points(cluster_df_list, title=None, titles=None,
         # 添加网格线
         ax.grid(True, linestyle='--', alpha=0.6)
         
-        # 打印统计信息
-        print(f"\nCluster {i} 统计信息:")
+        # 打印统计信息（使用实际的cluster_id）
+        print(f"\nCluster {actual_cluster_id} 统计信息:")
         print(f"总数据点数: {len(duration_list)}")
         print(f"显著低值点数: {sum(is_significantly_low)}")
         print(f"零值点数: {sum(is_zero)}")
@@ -864,62 +868,127 @@ def get_multi_cluster_datasets(data_df: pd.DataFrame, cluster_id_list: list, dat
 
 
 if __name__ == '__main__':
-    # 示例：使用阈值过滤方法分析洗衣机频率聚类数据
-    ANALYZE_DIR = r'./cluster_data/dbscan_result/washing_machine_freq/0.1_20_low_freq_bilistm/'
+    """
+    主函数：执行少样本学习和偏倚检测分析流程
+    
+    功能概述：
+    1. 分析聚类结果的时间分布，识别异常时间段和偏倚现象
+    2. 从连续的时间段中提取训练集和测试集数据
+    3. 支持多种过滤方法（阈值过滤、统计指标过滤）
+    4. 生成可视化图表，展示聚类结果的时间分布特征
+    
+    使用方法：
+    1. 配置文件路径：
+       - ANALYZE_DIR: 聚类结果分析目录，包含time_gap_data.json等文件
+       - AGGREGATE_FILE: 聚合功率数据文件路径
+       - APPLIANCES_FILE: 电器功率数据文件路径
+    
+    2. 执行聚类分析：
+       - 调用few_shot_and_bias_cluster_analyze函数分析聚类结果
+       - 可选择过滤方法：'threshold'（固定阈值）或'statistical'（统计多指标）
+       - 生成可视化图表和JSON结果文件
+    
+    3. 数据集构建：
+       - 读取连续时间段数据
+       - 合并聚合数据和电器数据
+       - 配置训练集和测试集的划分策略
+       - 调用get_multi_cluster_datasets函数提取指定聚类的数据集
+    
+    配置参数说明：
+    - filtering_method: 过滤方法选择
+      * 'threshold': 使用固定阈值过滤异常时间段
+      * 'statistical': 使用统计指标（均值、标准差等）过滤
+    - threshold: 阈值大小（秒），用于过滤过短的时间段
+    - cluster_id_list: 需要提取数据集的聚类ID列表
+    - dataset_config: 数据集配置字典
+      * train_set_threshold: 训练集的时间段总时长阈值（秒）
+      * test_set_config: 测试集配置
+        - test_method: 测试集划分方法 ('total' 或 'duration')
+        - total: 按时间长度划分测试集
+          * time_unit: 时间单位 ('days' 或 'months')
+          * time_length: 时间长度
+        - duration: 按时长阈值划分测试集
+          * threshold: 时长阈值（秒）
+    
+    输出文件：
+    - consecutive_segments.json: 连续时间段分析结果
+    - cluster_datasets_*.npy: 各聚类的训练集和测试集数据
+    
+    注意事项：
+    - 确保所有文件路径正确且文件存在
+    - 时间单位配置要与数据的时间范围匹配
+    - 阈值参数需要根据具体数据特点进行调整
+    """
+    
+    # ========== 步骤1：配置文件路径 ==========
+    # 设置分析目录和数据文件路径
+    ANALYZE_DIR = r'./cluster_data/dbscan_result/washing_machine/0.6_20_bilistm/'
     AGGREGATE_FILE = 'E:/datasets/NILM/uk_dale/house_1/channel_1.dat'
     APPLIANCES_FILE = 'E:/datasets/NILM/uk_dale/house_1/channel_5.dat'
 
+    # ========== 步骤2：执行聚类结果分析 ==========
     print("===== 开始执行阈值过滤分析 =====")
     consecutive_segments = few_shot_and_bias_cluster_analyze(
         json_path=ANALYZE_DIR + 'time_gap_data.json',
-        visualize=True,  # 开启可视化
+        visualize=True,  # 开启可视化，生成聚类时间分布图
         filtering_method='threshold',  # 可选：'statistical'（统计多指标）/'threshold'（固定阈值）
-        threshold=3600,
-        output_json_path=ANALYZE_DIR
+        threshold=3600,  # 过滤阈值：3600秒（1小时），过滤掉时长小于1小时的时间段
+        output_json_path=ANALYZE_DIR  # 输出JSON文件的保存路径
     )
 
     print('连续段已经分析完毕')
 
-
-    with open(ANALYZE_DIR + 'consecutive_segments.json', 'r', encoding='utf-8') as f:
-        consecutive_segments = json.load(f)
+    # # ========== 步骤3：加载连续时间段分析结果 ==========
+    # # 读取上一步生成的连续时间段数据
+    # with open(ANALYZE_DIR + 'consecutive_segments.json', 'r', encoding='utf-8') as f:
+    #     consecutive_segments = json.load(f)
     
+    # ========== 步骤4：读取原始功率数据 ==========
+    # 读取聚合功率数据（总功率）
     aggregate_df = pd.read_csv(
         AGGREGATE_FILE,
-        sep='\s+',  # 空格分隔
-        header=None,  # 无表头
-        names=['timestamp', 'aggregate']  # 添加列名
+        sep='\s+',  # 空格分隔符
+        header=None,  # 无表头行
+        names=['timestamp', 'aggregate']  # 指定列名：时间戳和聚合功率值
     )
     
-    # 读取appliances文件
+    # 读取电器功率数据（洗衣机功率）
     appliances_df = pd.read_csv(
         APPLIANCES_FILE,
-        sep='\s+',  # 空格分隔
-        header=None,  # 无表头
-        names=['timestamp', 'appliance']  # 添加列名
+        sep='\s+',  # 空格分隔符
+        header=None,  # 无表头行
+        names=['timestamp', 'appliance']  # 指定列名：时间戳和电器功率值
     )
     
+    # ========== 步骤5：合并聚合数据和电器数据 ==========
+    # 根据时间戳将聚合数据和电器数据合并，确保时间对齐
     merged_df = merge_dataframes_by_timestamp(aggregate_df, appliances_df)
 
-    cluster_id_list = ['4', '5', '6', '7', '8', '9']
+    # ========== 步骤6：配置数据集提取参数 ==========
+    # 指定需要提取数据集的聚类ID列表
+    cluster_id_list = ['2', '3', '4', '5', '6']
+    
+    # 配置训练集和测试集的划分策略
     dataset_config = {
-        'train_set_threshold': 3600,
+        'train_set_threshold': 3600,  # 训练集总时长阈值：3600秒（1小时）
         'test_set_config': {
-            'test_method': 'total',
+            'test_method': 'total',  # 测试集划分方法：'total'（按时间长度）或 'duration'（按时长阈值）
             'total': {
-                'time_unit': 'months',
-                'time_length': 5
+                'time_unit': 'months',  # 时间单位：'days' 或 'months'
+                'time_length': 3  
             },
             'duration': {
-                'threshold': 60000
+                'threshold': 60000  # 时长阈值：60000秒，用于duration方法
             }
         }
     }
 
+    # ========== 步骤7：提取多聚类数据集 ==========
+    # 根据配置参数提取指定聚类的训练集和测试集数据
     get_multi_cluster_datasets(
-        data_df=merged_df,
-        cluster_id_list=cluster_id_list,
-        consecutive_segments=consecutive_segments,
-        dataset_config=dataset_config,
-        save_dir=ANALYZE_DIR
+        data_df=merged_df,  # 合并后的功率数据
+        cluster_id_list=cluster_id_list,  # 要提取的聚类ID列表
+        consecutive_segments=consecutive_segments,  # 连续时间段信息
+        dataset_config=dataset_config,  # 数据集配置
+        save_dir=ANALYZE_DIR  # 保存目录
     )

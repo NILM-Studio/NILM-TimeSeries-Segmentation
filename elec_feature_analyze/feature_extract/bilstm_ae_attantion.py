@@ -4,8 +4,9 @@ import numpy as np
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import (
     Input, LSTM, RepeatVector, TimeDistributed, Dense, Masking,
-    Bidirectional, AdditiveAttention
+    Bidirectional, Permute, Multiply, Lambda, Layer
 )
+from tensorflow.keras import backend as K
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
@@ -24,9 +25,9 @@ def bilstm_ae_attention(data: np.ndarray, config: dict):
     - 全局级别：输出 (n_samples, latent_dim)，聚合时间信息，适合聚类等任务
     
     模型结构：
-    - 编码器：BiLSTM(32+32) + AdditiveAttention(全局) + Dense(latent_dim)
+    - 编码器：BiLSTM(32+32) + 全局注意力 + Dense(latent_dim)
       - BiLSTM 提取双向时序特征，每个时间步都有 64 维特征
-      - AdditiveAttention 学习时间步重要性并聚合为全局特征
+      - 全局注意力通过计算时间步权重并加权求和，聚合为全局特征
       - Dense 层将 64 维全局特征降维到 latent_dim
     - 解码器：RepeatVector + BiLSTM(32+32) + TimeDistributed(Dense)，重构原始时序
     
@@ -43,17 +44,21 @@ def bilstm_ae_attention(data: np.ndarray, config: dict):
                       - patience (int): 早停耐心值，默认5
     
     Returns:
-        np.ndarray: 提取的全局注意力特征，形状为 (n_samples, latent_dim)
-                    - n_samples: 样本数量
-                    - latent_dim: 全局特征维度
+        tuple: (features, training_history)
+            features (np.ndarray): 提取的全局注意力特征，形状为 (n_samples, latent_dim)
+            training_history (dict): 训练过程的历史信息，包含：
+                - loss: 训练损失
+                - val_loss: 验证损失
+                - epochs_trained: 实际训练轮数
     
     Example:
         >>> import numpy as np
         >>> data = np.random.rand(100, 50, 1)  # 100个样本，50个时间步，1个特征
         >>> config = {"latent_dim": 64, "epochs": 50, "batch_size": 32, 
         ...           "learning_rate": 0.001, "patience": 5}
-        >>> features = bilstm_ae_attention(data, config)
+        >>> features, history = bilstm_ae_attention(data, config)
         >>> print(features.shape)  # (100, 64)
+        >>> print(history.keys())  # dict_keys(['loss', 'val_loss', 'epochs_trained'])
     
     Note:
         全局注意力机制的优势：
@@ -111,15 +116,26 @@ def bilstm_ae_attention(data: np.ndarray, config: dict):
         name="encoder_bilstm"
     )(masking_layer)
 
-    # 全局注意力层：AdditiveAttention，聚合时间维度
-    # - attention_axes=[1]: 沿时间轴（第1维）聚合
-    # - 输入: [query, value]，这里使用自注意力（query=value=编码器输出）
-    # - 输出形状: (batch_size, 64)，时间维度被聚合
-    attention_layer = AdditiveAttention(name="global_attention")
-    attention_output = attention_layer(
-        [encoder_bilstm, encoder_bilstm],
-        attention_axes=[1]  # 沿时间轴聚合，输出全局特征
-    )
+    # 全局注意力层：通过计算时间步权重并加权求和实现全局聚合
+    # 步骤：
+    # 1. 计算每个时间步的注意力权重（通过全连接层）
+    # 2. 对权重进行softmax归一化
+    # 3. 使用加权求和聚合时间维度
+    
+    # 计算注意力权重：使用全连接层计算每个时间步的重要性分数
+    # 输出形状: (batch_size, timesteps, 1)
+    attention_scores = Dense(1, activation='tanh', name="attention_scores")(encoder_bilstm)
+    
+    # 对注意力分数进行softmax归一化，确保所有时间步的权重和为1
+    # 输出形状: (batch_size, timesteps, 1)
+    attention_weights = Lambda(lambda x: K.softmax(x, axis=1), name="attention_weights")(attention_scores)
+    
+    # 使用加权求和聚合时间维度：将注意力权重与编码器输出相乘后求和
+    # 输出形状: (batch_size, 64)，时间维度被聚合
+    attention_output = Lambda(
+        lambda x: K.sum(x[0] * x[1], axis=1),
+        name="global_attention"
+    )([encoder_bilstm, attention_weights])
 
     # 编码器特征降维：将 64 维全局特征降维到 latent_dim
     # - 输出形状: (batch_size, latent_dim)
@@ -199,4 +215,12 @@ def bilstm_ae_attention(data: np.ndarray, config: dict):
     print(f"\n原始数据形状: {X.shape}")  # 输出 (n_samples, timesteps, n_features)
     print(f"全局注意力特征形状: {X_global_features.shape}")  # 输出 (n_samples, latent_dim)
     
-    return X_global_features
+    # 构建训练历史信息字典
+    training_history = {
+        'loss': history.history['loss'],
+        'val_loss': history.history['val_loss'],
+        'epochs_trained': len(history.history['loss']),
+        'model_name': 'BiLSTM+Attention'
+    }
+    
+    return X_global_features, training_history
