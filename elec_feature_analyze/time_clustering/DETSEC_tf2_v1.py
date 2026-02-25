@@ -55,7 +55,7 @@ def extractFeatures(ts_data, seq_length, mask_val):
 
 
 def gate(vec):
-    mask = tf.layers.dense(vec, vec.get_shape()[1].value, activation=tf.sigmoid)
+    mask = tf.keras.layers.Dense(vec.get_shape()[1].value, activation=tf.sigmoid)(vec)
     return mask
 
 
@@ -164,11 +164,11 @@ def AE3(x, b_size, n_dim, seqL, mask, toReuse):
         out_list_bw = []
         for i in range(n_splits):
             temp_cell = outputsDecG[:, i, :]
-            tt = tf.layers.dense(temp_cell, n_dim, activation=None)
+            tt = tf.keras.layers.Dense(n_dim, activation=None)(temp_cell)
             out_list.append(tt)
 
             temp_cell2 = outputsDecGFW[:, i, :]
-            tt2 = tf.layers.dense(temp_cell, n_dim, activation=None)
+            tt2 = tf.keras.layers.Dense(n_dim, activation=None)(temp_cell)
             out_list_bw.append(tt2)
 
         reconstruct = tf.concat(out_list, axis=1)
@@ -190,19 +190,21 @@ output_dir = dirName.split("/")[-1]
 dataFileName = dirName + "/data.npy"
 seqLFileName = dirName + "/seq_length.npy"
 
-data = np.load(dataFileName)
+data = np.load(dataFileName)[:,:,0]
+print("Data shape:", data.shape)
 n_row = data.shape[0]
 n_col = data.shape[1]
-data = np.squeeze(data, axis=-1).astype(np.float32)
+if len(data.shape) == 3 and data.shape[-1] == 1:
+    data = data.squeeze(axis=-1)
 
 seqLength = np.load(seqLFileName)
 
 # 列出所有可用设备
 devices = tf.config.list_physical_devices()
-print("所有设备:", devices)
+print("Available Devices:", devices)
 
 # 检查GPU是否可用
-print("GPU可用:", tf.config.list_physical_devices('GPU'))
+print("GPU status:", tf.config.list_physical_devices('GPU'))
 # 配置会话
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True

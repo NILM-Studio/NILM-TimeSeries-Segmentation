@@ -205,7 +205,7 @@ if __name__ == "__main__":
     # This means that, if a time series has 4 attributes and it has a lenght equal to 20, the corresponding values in the seq_length.npy file will be 80
     seqLFileName = dirName + "seq_length.npy"
 
-    data = np.load(dataFileName)
+    data = np.load(dataFileName)[:, :, 0]
     # 新增：移除最后一个大小为1的维度（若存在）
     if len(data.shape) == 3 and data.shape[-1] == 1:
         data = data.squeeze(axis=-1)
