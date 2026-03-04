@@ -78,6 +78,48 @@ $$ s_{gated} = g \odot s $$
     $$ z = \text{ReLU}(W_{dense}[\hat{s}_{fw}; \hat{s}_{bw}] + b_{dense}) $$
     其中 $z$ 即为最终提取的全局特征（Latent Vector）。
 
+### 2.4 梯度下降与优化策略
+
+为了保证模型训练的稳定性和收敛速度，代码中采用了以下优化策略：
+
+1.  **Adam 优化器**：
+    使用 Adaptive Moment Estimation (Adam) 算法进行参数更新。Adam 结合了动量法（Momentum）和 RMSProp 的优点，能够自适应地调整每个参数的学习率。
+    更新公式简化示意：
+    $$ \theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t $$
+
+2.  **梯度裁剪 (Gradient Clipping)**：
+    由于 LSTM 等循环神经网络在处理长序列时容易出现梯度爆炸（Gradient Explosion）问题，代码中在编译模型时设置了 `clipnorm=1.0`。
+    当梯度的 L2 范数 $\|g\|_2$ 超过阈值 $c$ (1.0) 时，会对梯度进行缩放：
+    $$ g \leftarrow g \cdot \frac{c}{\max(\|g\|_2, c)} $$
+    这有效地防止了训练过程中的数值不稳定。
+
+3.  **损失函数**：
+    使用均方误差 (MSE) 作为重构损失，衡量输入序列 $X$ 与重构序列 $\hat{X}$ 之间的差异。
+    $$ \mathcal{L} = \frac{1}{N} \sum_{i=1}^{N} \| x_i - \hat{x}_i \|^2 $$
+
+### 2.5 可训练参数 (Trainable Parameters)
+
+模型中参与梯度下降更新的参数集合 $\theta$ 包括：
+
+1.  **BiLSTM 编码器与解码器参数**：
+    *   LSTM 核权重矩阵 (Kernel Weights): $W_f, W_i, W_c, W_o$ (用于输入)
+    *   LSTM 循环权重矩阵 (Recurrent Weights): $U_f, U_i, U_c, U_o$ (用于隐藏状态)
+    *   LSTM 偏置向量 (Biases): $b_f, b_i, b_c, b_o$
+    *   *注：双向 LSTM 包含前向和后向两套上述参数。*
+
+2.  **DETSEC Attention 层参数** (前向与后向各一套)：
+    *   特征变换权重矩阵: $W_\omega \in \mathbb{R}^{nunits \times attention\_size}$
+    *   特征变换偏置向量: $b_\omega \in \mathbb{R}^{attention\_size}$
+    *   上下文向量 (Context Vector): $u_\omega \in \mathbb{R}^{attention\_size}$
+
+3.  **Gating 层参数** (前向与后向各一套)：
+    *   门控全连接权重: $W_{gate} \in \mathbb{R}^{nunits \times nunits}$
+    *   门控全连接偏置: $b_{gate} \in \mathbb{R}^{nunits}$
+
+4.  **全连接层参数** (Encoder Dense & Output Dense)：
+    *   编码器降维权重与偏置: $W_{enc}, b_{enc}$
+    *   解码器重构权重与偏置: $W_{out}, b_{out}$
+
 ---
 
 ## 3. 代码结构解析
