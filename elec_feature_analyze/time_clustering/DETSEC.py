@@ -25,7 +25,7 @@ from sklearn.cluster import KMeans
 
 GRU_NUINTS = 64  # GRU隐藏层维度（大数据集用512，小数据集建议32/64）
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # 禁用GPU
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # 禁用GPU
 
 
 def buildMaskBatch(batch_seql, max_size):
@@ -191,24 +191,49 @@ if __name__ == "__main__":
     # n_clusters = int(sys.argv[3])
 
     # directory in which data file are stored
-    dirName = './elec_feature_analyze/time_clustering/cluster_data/'
+    dirName = './cluster_data/washing_machine/'
     # number of dimensions of the multivariate time series
     n_dims = 1
     # Num of clusters, commonly, equals to the number of classes on which the dataset is defined on
     n_clusters = 5
+    # z_index: 指定使用数据的哪个维度（当数据形状为(n, len, k)且k>1时需要指定）
+    # 数据维度说明（对应data_fusion.npy的第2维）：
+    # z_index = 0: 时间戳
+    # z_index = 1: 原生功率
+    # z_index = 2: 滤波后功率
+    # z_index = 3: 小波变换后分离的高频功率
+    # z_index = 4: 小波变换后分离的低频功率
+    z_index = 2  # 默认使用滤波后功率（推荐）
 
-    output_dir = dirName.split("/")[-1]
+    appliance_name = dirName.split("/")[-1]
+    output_dir = appliance_name + "_detsec512"
     # DATA FILE with size:	(nSamples, (n_dims * max_length) )
-    dataFileName = dirName + "data.npy"
+    dataFileName = dirName + "data_fusion.npy"
     # SEQUENCE LENGTH FILE with size: ( nSamples, )
     # It contains the sequence length (multiplied by n_dims) for each sequence with positional reference to the data.npy file
     # This means that, if a time series has 4 attributes and it has a lenght equal to 20, the corresponding values in the seq_length.npy file will be 80
-    seqLFileName = dirName + "seq_length.npy"
+    seqLFileName = dirName + "seq_length_fusion.npy"
 
-    data = np.load(dataFileName)[:, :, 0]
-    # 新增：移除最后一个大小为1的维度（若存在）
-    if len(data.shape) == 3 and data.shape[-1] == 1:
-        data = data.squeeze(axis=-1)
+    # 加载数据并检查形状
+    raw_data = np.load(dataFileName)
+    print(f"数据形状: {raw_data.shape}")
+    
+    # 检查数据维度
+    if len(raw_data.shape) == 2:
+        print("检测到二维数据，自动扩展为三维")
+        data = np.expand_dims(raw_data, axis=2)
+    elif len(raw_data.shape) == 3:
+        if raw_data.shape[2] == 1:
+            print(f"数据形状为 (n, len, 1)，使用第0维")
+            data = raw_data[:, :, 0]
+        else:
+            print(f"数据形状为 (n, len, {raw_data.shape[2]}), 使用第{z_index}维")
+            print(f"提示: 如需使用其他维度，请修改 z_index 参数")
+            data = raw_data[:, :, z_index]
+    else:
+        raise ValueError(f"不支持的数据形状: {raw_data.shape}")
+    
+    print(f"处理后数据形状: {data.shape}")
     n_row = data.shape[0]
     n_col = data.shape[1]
 
@@ -324,15 +349,11 @@ if __name__ == "__main__":
         kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(embedd)
         print("Epoch:", e, "| COST_EMB:", costT / iterations, " | COST_CRC: ", costT2 / iterations)
 
-    output_dir = output_dir + "_detsec512"
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
-
     mask_val = buildMaskBatch(orig_seqLength, max_length)
     embedd = extractFeatures(orig_data, orig_seqLength, mask_val)
     kmeans = KMeans(n_clusters=n_clusters, random_state=0).fit(embedd)
 
     # SAVE THE DATA REPRESENTATION
-    np.save("cluster_data/detsec_features.npy", embedd)
+    np.save(f"{dirName}detsec_features.npy", embedd)
     # SAVE THE CLUSTERING ASSIGNMENT
-    np.save("cluster_data/detsec_clust_assignment.npy", np.array(kmeans.labels_))
+    np.save(f"{dirName}detsec_clust_assignment.npy", np.array(kmeans.labels_))

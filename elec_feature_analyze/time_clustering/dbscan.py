@@ -1,3 +1,18 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+DBSCAN 聚类工具
+
+功能：
+1. 使用特征矩阵进行 DBSCAN 聚类
+2. 支持多种距离度量（euclidean、dtw、fastdtw等）
+3. 支持EPS扫描模式自动寻找最优参数
+4. 支持固定EPS参数进行聚类
+5. 保存聚类结果和评估指标
+
+使用方法：
+    修改文件开头的配置参数后运行：python dbscan.py
+"""
 import json
 import os
 import sys
@@ -10,7 +25,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import cdist
 from tslearn.utils import to_time_series_dataset
-from cluster_result_analyze import cluster_result_save, cluster_result_quantification
+from cluster_result_analyze import cluster_result_pic_save, cluster_result_quantification
 import matplotlib.pyplot as plt
 
 # ======================== 常量配置（集中管理，方便修改） ========================
@@ -18,21 +33,27 @@ import matplotlib.pyplot as plt
 sys.stdout.flush()
 sys.stderr.flush()
 
-BASE_DIR = r'./cluster_data/washing_machine'
+# BASE_DIR = r'./cluster_data_hpc/dishwasher'
+BASE_DIR = r'./cluster_data_hpc/fridge'
+# BASE_DIR = r'./cluster_data_hpc/kettle'
+# BASE_DIR = r'./cluster_data_hpc/microwave'
+# BASE_DIR = r'./cluster_data_hpc/washing_machine'
+
 DATA_PATH = os.path.join(BASE_DIR, 'data_fusion.npy')
-FEATURES_PATH = os.path.join(BASE_DIR, 'lstm_ae_features_cleaned_power_64_dim.npy')
+FEATURES_PATH = os.path.join(BASE_DIR, 'autoencoder_features_cleaned_power_64_dim.npy')
 SEQ_LEN_PATH = os.path.join(BASE_DIR, 'seq_length_fusion.npy')
 DATA_MAPPING_FILE = os.path.join(BASE_DIR, 'data_mapping_list_fusion.json')
-EXTERN_TAG = 'lstm'  # 额外标签，在输出结果命名中添加额外的标签用于标识输出结果
+SAVE_DIR = r'./cluster_data_hpc/dbscan_result/'
+EXTERN_TAG = 'autoencoder'  # 额外标签，在输出结果命名中添加额外的标签用于标识输出结果
 CLUSTER_METHOD = 'dbscan'
 # 启动模式：最优eps扫描、固定eps聚类
-SCAN_OPT_EPS = True  # 设置为True启用扫描
+SCAN_OPT_EPS = False  # 设置为True启用扫描
 COL_INDEX = 2   # 指定data的数据行中需要使用的列索引
 
 CLUSTER_CONFIG = {
     'dbscan': {
         'method': 'dbscan',
-        'eps': 2,
+        'eps': 1.25,
         'min_pts': 20,
         'metric': 'euclidean',
         'normalization_method': 'zscore'
@@ -61,9 +82,7 @@ def compute_distance_matrix(data, metric='euclidean', metric_params=None):
         distance_matrix (np.ndarray): 距离矩阵 (n_sample, n_sample)
     """
     print(f"计算{metric}距离矩阵...")
-    if metric == 'dtw':
-        return dtw_matrix_compute(data)
-    elif metric == 'fastdtw':
+    if metric == 'dtw' or metric == 'fastdtw':
         return fast_dtw_matrix_tslearn(data)
     else:
         # 处理度量参数（默认空字典）
@@ -205,10 +224,13 @@ def load_data(data_path: str, feature_path: str, seq_len_path: str) -> tuple[np.
 
 def normalize_features(feature_matrix: np.ndarray, normalization_method: str = 'zscore') -> list[np.ndarray]:
     """
-    特征归一化：全局归一化（专门针对特征矩阵）
+    特征归一化：全局归一化（专门针对特征矩阵或时间序列数据）
 
     参数：
-        feature_matrix: 特征矩阵，形状为 [样本数, 特征维度]
+        feature_matrix: 特征矩阵或时间序列数据
+            - 如果是 2D (n_samples, feature_dim)：特征矩阵
+            - 如果是 2D (n_samples, seq_len)：时间序列数据（每个样本是一个序列）
+            - 如果是 1D (n_samples,)：标量特征
         normalization_method: 归一化方法，可选 'minmax' 或 'zscore'，默认为 'zscore'
             - 'minmax': Min-Max 归一化，将特征缩放到 [0, 1] 范围
             - 'zscore': Z-Score 标准化，将特征标准化为均值0、标准差1（推荐）
@@ -217,17 +239,17 @@ def normalize_features(feature_matrix: np.ndarray, normalization_method: str = '
         normalized_feature_list: 归一化后的特征列表
     """
     print(f"\n【特征归一化】")
-    print(f"特征矩阵大小: {feature_matrix.shape if feature_matrix.size > 0 else 'Empty/None'}")
+    print(f"数据形状: {feature_matrix.shape if feature_matrix.size > 0 else 'Empty/None'}")
+    print(f"数据维度: {feature_matrix.ndim if feature_matrix.size > 0 else 'Unknown'}")
     print(f"归一化方法: {normalization_method}")
     sys.stdout.flush()
 
-    # 检查特征矩阵是否为空
+    # 检查数据是否为空
     if feature_matrix.size == 0:
-        print("警告: 特征矩阵为空，无法进行特征聚类，退出程序")
+        print("警告: 数据为空，无法进行聚类，退出程序")
         sys.exit(1)
-    else:
-        print("使用特征矩阵进行归一化")
-        data = feature_matrix
+
+    data = feature_matrix
 
     # 根据参数选择归一化方法
     if normalization_method == 'minmax':
@@ -241,17 +263,25 @@ def normalize_features(feature_matrix: np.ndarray, normalization_method: str = '
     else:
         raise ValueError(f"不支持的归一化方法: {normalization_method}，请选择 'minmax' 或 'zscore'")
 
-    # 全局归一化：所有样本一起计算归一化参数
-    normalized_features = scaler.fit_transform(data)
-
-    # 转换为列表格式
-    normalized_feature_list = [normalized_features[i] for i in range(len(normalized_features))]
+    # 根据数据维度进行不同的归一化处理
+    if data.ndim == 2:
+        # 2D 数据：(n_samples, feature_dim) 或 (n_samples, seq_len)
+        # 全局归一化：所有样本一起计算归一化参数
+        normalized_features = scaler.fit_transform(data)
+        normalized_feature_list = [normalized_features[i] for i in range(len(normalized_features))]
+    elif data.ndim == 1:
+        # 1D 数据：(n_samples,) - 标量特征
+        normalized_features = scaler.fit_transform(data.reshape(-1, 1)).flatten()
+        normalized_feature_list = [[normalized_features[i]] for i in range(len(normalized_features))]
+    else:
+        raise ValueError(f"不支持的数据维度: {data.ndim}，仅支持 1D 或 2D 数据")
 
     # 打印归一化统计信息
     print(f"归一化完成，有效序列数量: {len(normalized_feature_list)}")
-    print(f"归一化后范围: [{normalized_features.min():.4f}, {normalized_features.max():.4f}]")
-    print(f"归一化后均值: {normalized_features.mean():.4f}")
-    print(f"归一化后标准差: {normalized_features.std():.4f}")
+    if data.ndim == 2:
+        print(f"归一化后范围: [{normalized_features.min():.4f}, {normalized_features.max():.4f}]")
+        print(f"归一化后均值: {normalized_features.mean():.4f}")
+        print(f"归一化后标准差: {normalized_features.std():.4f}")
     sys.stdout.flush()
 
     return normalized_feature_list
@@ -260,7 +290,7 @@ def normalize_features(feature_matrix: np.ndarray, normalization_method: str = '
 # ======================== 距离矩阵缓存与获取 ========================
 def get_distance_matrix(ts_list: list[np.ndarray], metric: str = 'euclidean') -> np.ndarray:
     """
-    获取距离矩阵（直接计算）
+    获取距离矩阵（支持缓存）
 
     参数：
         ts_list: 时间序列列表
@@ -269,14 +299,57 @@ def get_distance_matrix(ts_list: list[np.ndarray], metric: str = 'euclidean') ->
     返回：
         dist_matrix: 距离矩阵
     """
+    # 只在使用 DTW 相关度量时进行缓存
+    if metric in ['dtw', 'fastdtw']:
+        # 生成缓存文件名
+        cache_dir = BASE_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        # 生成唯一标识符：基于样本数、序列长度和度量方法
+        n_samples = len(ts_list)
+        if ts_list:
+            seq_len = len(ts_list[0])
+        else:
+            seq_len = 0
+        
+        # 生成缓存文件名
+        cache_filename = f"dtw_dist_matrix_{metric}_{n_samples}_{seq_len}.npy"
+        cache_path = os.path.join(cache_dir, cache_filename)
+        
+        # 检查缓存是否存在
+        if os.path.exists(cache_path):
+            print(f"加载缓存的距离矩阵: {cache_path}")
+            dist_matrix = np.load(cache_path)
+            print(f"距离矩阵形状: {dist_matrix.shape}")
+            sys.stdout.flush()
+            return dist_matrix
+    
     print(f"开始计算{metric}距离矩阵...")
     sys.stdout.flush()
 
     # 直接计算距离矩阵
     dist_matrix = compute_distance_matrix(ts_list, metric)
 
-    print(f"{metric}距离矩阵计算完成！")
-    sys.stdout.flush()
+    # 只在使用 DTW 相关度量时保存缓存
+    if metric in ['dtw', 'fastdtw']:
+        # 生成缓存文件名
+        cache_dir = BASE_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        n_samples = len(ts_list)
+        if ts_list:
+            seq_len = len(ts_list[0])
+        else:
+            seq_len = 0
+        
+        cache_filename = f"dtw_dist_matrix_{metric}_{n_samples}_{seq_len}.npy"
+        cache_path = os.path.join(cache_dir, cache_filename)
+        
+        # 保存距离矩阵到缓存
+        print(f"保存距离矩阵到缓存: {cache_path}")
+        np.save(cache_path, dist_matrix)
+        print(f"距离矩阵形状: {dist_matrix.shape}")
+        sys.stdout.flush()
 
     return dist_matrix
 
@@ -341,12 +414,13 @@ def evaluate_clustering(labels: np.ndarray, dist_matrix: np.ndarray, org_data: n
     """
     # 计算评估指标
     sil_score, db_score, ch_score = cluster_result_quantification(
-        labels, dist_matrix, org_data, feature_matrix, save_dir, col_index=col_index
+        labels, dist_matrix, org_data, feature_matrix, save_dir, col_index=col_index, visualize_noise=0
     )
 
     # 提取基础信息
     n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
     n_noise = np.sum(labels == -1)
+
     appliance_name = BASE_DIR.split('/')[2]
 
     # 统计每个cluster的实例数量（包括噪声cluster）
@@ -402,7 +476,7 @@ def save_clustering_results(
         cluster_result_dir: 结果保存目录
     """
     appliance_name = BASE_DIR.split('/')[2]
-    cluster_result_dir = rf'./cluster_data/dbscan_result/{appliance_name}/{eps}_{min_pts}_{EXTERN_TAG}/'
+    cluster_result_dir = rf'{SAVE_DIR}/{appliance_name}/{eps}_{min_pts}_{EXTERN_TAG}/'
     labels_save_path = os.path.join(cluster_result_dir, f'cluster_labels.npy')
 
     # 创建目录
@@ -414,11 +488,55 @@ def save_clustering_results(
         data_list.append(data_np[i])
 
     # 保存聚类分析结果，传入data_list用于可视化
-    cluster_result_save(data_list, seq_len, labels, save_dir=cluster_result_dir, col_index=col_index)
+    cluster_result_pic_save(data_list, seq_len, labels, save_dir=cluster_result_dir, col_index=col_index)
 
     # 保存labels数组
     np.save(labels_save_path, labels)
     print(f"聚类标签已保存到: {labels_save_path}")
+
+    # 按聚类ID保存数据为3D numpy数组 (n, max_len, feature)
+    print("\n保存每个聚类的数据为3D numpy数组 (n, max_len, feature)...")
+    # 按照cluster对数据进行分组
+    cluster_groups = {}
+    for i in range(len(labels)):
+        cluster_id = labels[i]
+        if cluster_id not in cluster_groups:
+            cluster_groups[cluster_id] = []
+        # 获取完整特征数据 (保留所有特征列)
+        data = data_np[i][:seq_len[i]]
+        cluster_groups[cluster_id].append(data)
+
+    # 保存每个聚类的数据（包括噪声点 cluster_id=-1）
+    for cluster_id, cluster_data in cluster_groups.items():
+        # 计算最大长度
+        max_length = max(len(seq) for seq in cluster_data)
+        
+        # 检查数据维度，如果是2D则升维为3D (x, y, 1)
+        sample_data = cluster_data[0]
+        if len(sample_data.shape) == 2:
+            # 已经是2D (seq_len, feature_dim)
+            feature_dim = sample_data.shape[1]
+        elif len(sample_data.shape) == 1:
+            # 是1D，需要升维为2D (seq_len, 1)
+            feature_dim = 1
+            # 将1D数据转换为2D
+            cluster_data = [seq.reshape(-1, 1) if len(seq.shape) == 1 else seq for seq in cluster_data]
+        else:
+            feature_dim = 1
+        
+        # 创建填充后的3D数组 (n, max_len, feature)
+        n_samples = len(cluster_data)
+        padded_data = np.zeros((n_samples, max_length, feature_dim))
+        
+        # 填充数据
+        for i, seq in enumerate(cluster_data):
+            seq_len_actual = len(seq)
+            padded_data[i, :seq_len_actual, :] = seq
+        
+        # 保存为标准numpy数组
+        cluster_file_path = os.path.join(cluster_result_dir, f'Cluster_{cluster_id}.npy')
+        np.save(cluster_file_path, padded_data)
+        print(f"Cluster_{cluster_id}.npy 已保存，形状: {padded_data.shape}")
 
     # 打印保存路径
     print(f"\n【结果输出路径】")
@@ -626,12 +744,18 @@ def main():
     # 2. 加载数据
     data_np, features_matrix, seq_len = load_data(DATA_PATH, FEATURES_PATH, SEQ_LEN_PATH)
 
+    # 3. 检查特征矩阵是否为空
+    if features_matrix.size == 0:
+        print("警告: 特征矩阵为空，无法进行聚类，退出程序")
+        sys.exit(1)
+    print("使用特征矩阵进行聚类")
+
     if CLUSTER_METHOD == 'dbscan':
 
         if SCAN_OPT_EPS:
             # 执行EPS扫描
             appliance_name = os.path.basename(BASE_DIR.rstrip(os.sep))
-            save_dir = f'./cluster_data/dbscan_result/{appliance_name}/eps_scan_{EXTERN_TAG}/'
+            save_dir = rf'{SAVE_DIR}/{appliance_name}/eps_scan_{EXTERN_TAG}/'
             optimal_eps, eps_results = scan_eps(
                 data_np, features_matrix,
                 config=config,
@@ -652,9 +776,9 @@ def main():
                     'optimal_result': optimal_result,
                     'scan_parameters': {
                         'min_pts': config['min_pts'],
-                        'eps_start': 0.1,
+                        'eps_start': 0.02,
                         'eps_end': 2.0,
-                        'eps_step': 0.1,
+                        'eps_step': 0.02,
                         'metric': config.get('metric', 'euclidean')
                     }
                 }

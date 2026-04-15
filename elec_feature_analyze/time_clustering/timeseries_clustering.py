@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 
 # ===================== 1. 配置项（大写常量，统一管理） =====================
-ACTIVE_DIR = r"../../ukdale_disaggregate/clasp_seg/microwave/data"
-CPS_DIR = r"../../ukdale_disaggregate/clasp_seg/microwave/label"
-OUTPUT_DIR = r"./cluster_data/microwave/"
-APPLIANCE_NAME = "microwave"
+APPLIANCE_NAME = 'washing_machine'
+ACTIVE_DIR = rf"../../ukdale_disaggregate/clasp_seg/{APPLIANCE_NAME}/data"
+CPS_DIR = rf"../../ukdale_disaggregate/clasp_seg/{APPLIANCE_NAME}/fluss_label"
+OUTPUT_DIR = rf"./cluster_data/{APPLIANCE_NAME}/fluss_data/"
 '''
 可选DATA_COLUMN:
 - `power`: The original power value at the timestamp.
@@ -18,7 +18,7 @@ APPLIANCE_NAME = "microwave"
 DATA_COLUMN = ['timestamp', 'power', 'cleaned_power', 'high_freq', 'low_freq']
 CSV_ENCODING = "utf-8"  # 若报编码错，可改为"gbk"或"utf-8-sig"
 SAVE_NON_MATCH_FILE = True
-LABEL_TYPE = 0  # -1表示获取所有cps，0为融合cps，1为低频cps，2为高频cps
+LABEL_TYPE = -1  # -1表示获取所有cps，0为融合cps，1为低频cps，2为高频cps
 
 label_dict = {
     -1: "all",

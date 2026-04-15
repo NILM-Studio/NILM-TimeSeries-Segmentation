@@ -437,20 +437,20 @@ if __name__ == '__main__':
     # channel = 15
     # move_datafile_to_dataset(main_file, app_file, dataset_path, channel)
 
-    # file_path = r'./dataset/Microwave_Microwave.csv'
-    # df = pd.read_csv(file_path, index_col=0)
+    file_path = r'./process_dataset/WashMachine/WashMachine.csv'
+    df = pd.read_csv(file_path, index_col=0)
     # df_after_process = clean_data(df, 2)
     # df_after_process.to_csv(file_path, index=True)
     # print(f"已保存处理后的数据到: {file_path}")
-    # print_all_periods(df, 4)
+    print_all_periods(df, 4)
 
     # df = pd.read_csv(r'.\Air-condition\Air_condition.csv')
     # df = filter_data(df, 10, 'moving_avg')
     # df.to_csv(r'.\Air-condition\Air_condition_10_avg_filter.csv')
 
     # 获取原始.dat序列并且找到工作的
-    df = pd.read_csv(r'E:\datasets\NILM\uk_dale\house_1\channel_5.dat', delimiter=' ')
-    print(df)
-    get_active_segments(df, 10, save_file=True, save_file_path=r'.\ukdale_disaggregate\active\washing_machine',
-                        context_size=100)
-    exit()
+    # df = pd.read_csv(r'E:\datasets\NILM\uk_dale\house_1\channel_5.dat', delimiter=' ')
+    # print(df)
+    # get_active_segments(df, 10, save_file=True, save_file_path=r'.\ukdale_disaggregate\active\washing_machine',
+    #                     context_size=100)
+    # exit()

@@ -7,6 +7,69 @@ import pandas as pd
 from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 from tslearn.barycenters import dtw_barycenter_averaging
 from sklearn.manifold import TSNE
+import os
+import matplotlib.font_manager as fm
+import warnings
+
+def setup_chinese_font():
+    """
+    配置中文字体，按优先级尝试不同的字体
+    """
+    # 系统中已有的中文字体文件路径
+    chinese_font_paths = [
+        '/home/scnu2023024258/.local/share/fonts/wqy-microhei.ttc',
+        '/home/scnu2023024258/.local/share/fonts/SourceHanSansSC-Regular.otf',
+        '/home/scnu2023024258/.local/share/fonts/NotoSansCJKsc-Regular.otf'
+    ]
+    
+    # 尝试直接加载字体文件
+    for font_path in chinese_font_paths:
+        if os.path.exists(font_path):
+            try:
+                # 加载字体
+                font_prop = fm.FontProperties(fname=font_path)
+                font_name = font_prop.get_name()
+                
+                # 设置为默认字体
+                plt.rcParams['font.sans-serif'] = [font_name] + plt.rcParams['font.sans-serif']
+                print(f"成功加载中文字体: {font_name} ({font_path})")
+                plt.rcParams['axes.unicode_minus'] = False
+                return True
+            except Exception as e:
+                print(f"加载字体失败: {font_path}, 错误: {e}")
+    
+    # 尝试使用字体名称
+    chinese_font_names = [
+        'WenQuanYi Micro Hei',
+        'Source Han Sans SC',
+        'Noto Sans CJK SC',
+        'SimHei',
+        'Microsoft YaHei'
+    ]
+    
+    # 打印所有可用字体，方便调试
+    all_fonts = [f.name for f in fm.fontManager.ttflist]
+    print(f"系统中可用的字体数量: {len(all_fonts)}")
+    print(f"系统中的中文字体: {[f for f in all_fonts if any(ch in f for ch in ['Hei', 'Sans SC', 'CJK', '文泉'])]}")
+    
+    # 尝试使用系统中已有的中文字体
+    for font in chinese_font_names:
+        if font in all_fonts:
+            plt.rcParams['font.sans-serif'] = [font] + plt.rcParams['font.sans-serif']
+            print(f"使用中文字体: {font}")
+            plt.rcParams['axes.unicode_minus'] = False
+            return True
+    
+    # 如果没有找到中文字体，使用默认字体并忽略警告
+    print("警告: 未找到可用的中文字体，将使用默认字体")
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    # 忽略字体警告
+    warnings.filterwarnings("ignore", category=UserWarning, message="Glyph.*missing from font")
+    return False
+
+# 配置中文字体
+setup_chinese_font()
 
 # ================DeSTEC CONFIG=======================
 CLUSTER_RESULT_FILE = f'cluster_data/detsec_clust_assignment.npy'
@@ -305,7 +368,7 @@ def cluster_result_analyze(data_info_list, cluster_dict):
             print("无效的输入")
 
 
-def cluster_result_save(data_array, seq_length, cluster_result, save_dir, threshold=200, col_index=1):
+def cluster_result_pic_save(data_array, seq_length, cluster_result, save_dir, threshold=200, col_index=1):
     """
     保存聚类结果，按照cluster保存所有的聚类结果，将所有时间序列片段可视化并且保存到其对应的
     cluster_id的文件夹下
@@ -361,10 +424,6 @@ def cluster_result_save(data_array, seq_length, cluster_result, save_dir, thresh
             plt.ylabel("Value")
             plt.savefig(dir + f'item_{idx + 1}.png')
             plt.close()
-
-        # 将整个cluster的数据保存为一个npy文件
-        cluster_data_array = np.array(cluster_data, dtype=object)  # 使用object类型以支持不同长度的序列
-        np.save(os.path.join(save_dir, f'Cluster_{cluster_id}.npy'), cluster_data_array)
 
 
 def preprocess_cluster_data(
@@ -462,7 +521,8 @@ def visualize_cluster_results(
         save_dir: str | None = None,
         dist_method: str = 'dtw',
         col_index: int = 1,
-        sampling_threshold: int = 200  # 新增采样阈值参数
+        sampling_threshold: int = 200,  # 新增采样阈值参数
+        visualize_noise: int = 2  # 0: 不可视化噪声点, 1: 可视化噪声点为一个簇, 2: 可视化噪声点为x标记
 ) -> None:
     """
     聚类结果可视化：
@@ -478,6 +538,7 @@ def visualize_cluster_results(
     :param org_data: 完整原始时序数据（含噪声点，用于噪声点可视化）
     :param save_dir: 可视化结果保存目录（None则不保存）
     :param sampling_threshold: 当簇中样本数量超过此阈值时，将进行采样以避免计算失败
+    :param visualize_noise: 噪声点可视化模式，0: 不可视化, 1: 作为簇, 2: 作为x标记
     """
     valid_org_data = valid_org_data[:, :, col_index]
     org_data = org_data[:, :, col_index]  # 对原始数据也提取相同的列索引，用于噪声点可视化
@@ -488,7 +549,7 @@ def visualize_cluster_results(
     # 全局配置：中文显示 + 颜色映射
     plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu Sans']
     plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
-    cluster_colors = plt.cm.tab10(np.arange(n_clusters))
+    cluster_colors = plt.cm.tab10(np.arange(n_clusters + 1))  # 生成n_clusters+1个颜色，为噪声点预留
 
     # ========== 1. 绘制簇中心轮廓图（严格使用原始时序数据org_data） ==========
     print("步骤1: 开始绘制簇中心轮廓图...")
@@ -553,8 +614,11 @@ def visualize_cluster_results(
     # ========== 2. 绘制所有簇的前sampling_threshold个数据堆叠可视化图（整合到一张图中） ==========
     print("步骤2: 开始绘制所有簇的前sampling_threshold个数据堆叠图...")
 
-    # 计算子图布局（包括噪声点）
-    total_plots = n_clusters + 1  # 有效簇 + 噪声点
+    # 计算子图布局：根据visualize_noise决定是否包含噪声点
+    if visualize_noise > 0:
+        total_plots = n_clusters + 1  # 有效簇 + 噪声点
+    else:
+        total_plots = n_clusters  # 只显示有效簇
     n_cols = min(3, total_plots)  # 最多3列
     n_rows = (total_plots + n_cols - 1) // n_cols  # 计算所需行数
 
@@ -597,38 +661,45 @@ def visualize_cluster_results(
                          transform=axes[i].transAxes, fontsize=12)
             axes[i].set_title(f'簇 {cluster_id} - 无数据', fontsize=12)
 
-    # 绘制噪声点 (-1)
-    noise_idx = cluster_labels == -1
-    noise_seq = valid_org_data[0:0]  # 初始化空数组
-    if np.sum(noise_idx) > 0:
-        # 获取噪声点的原始数据
-        noise_seq = org_data[noise_idx]
-        print(f"  正在处理噪声点的可视化，共有 {len(noise_seq)} 个噪声点...")
+    # 绘制噪声点 (-1)，根据visualize_noise决定显示方式
+    if visualize_noise > 0:
+        noise_idx = cluster_labels == -1
+        noise_ax = axes[n_clusters]  # 噪声点显示在最后一个子图
         
-        # 限制要可视化的数据量为前sampling_threshold个
-        if len(noise_seq) > sampling_threshold:
-            noise_seq_subset = noise_seq[:sampling_threshold]
-            print(f"    噪声点包含 {len(noise_seq)} 个样本，将可视化前 {sampling_threshold} 个样本")
+        if np.sum(noise_idx) > 0:
+            # 获取噪声点的原始数据
+            noise_seq = org_data[noise_idx]
+            print(f"  正在处理噪声点的可视化，共有 {len(noise_seq)} 个噪声点...")
+            
+            # 限制要可视化的数据量为前sampling_threshold个
+            if len(noise_seq) > sampling_threshold:
+                noise_seq_subset = noise_seq[:sampling_threshold]
+                print(f"    噪声点包含 {len(noise_seq)} 个样本，将可视化前 {sampling_threshold} 个样本")
+            else:
+                noise_seq_subset = noise_seq
+                print(f"    噪声点包含 {len(noise_seq)} 个样本，全部可视化")
+            
+            # 根据 visualize_noise 参数决定显示方式
+            if visualize_noise == 2:
+                # visualize_noise=2: 将噪声点作为特殊类别显示（灰色，标题为"噪声点"）
+                for j, series in enumerate(noise_seq_subset):
+                    noise_ax.plot(series, alpha=0.6, color='gray', label=f'Noise {j}' if j < 3 else "")
+                noise_ax.set_title(f'Noise Points (-1) (前{len(noise_seq_subset)}个数据)', fontsize=12)
+            else:  # visualize_noise=1
+                # visualize_noise=1: 将噪声点作为第 n 个簇显示（与其他簇一样的方式）
+                for j, series in enumerate(noise_seq_subset):
+                    noise_ax.plot(series, alpha=0.6, label=f'Series {j}' if j < 3 else "")
+                noise_ax.set_title(f'Cluster {n_clusters} (前{len(noise_seq_subset)}个数据)', fontsize=12)
+            
+            noise_ax.set_xlabel('时间步 / 序列长度', fontsize=10)
+            noise_ax.set_ylabel('时序数值', fontsize=10)
+            noise_ax.grid(alpha=0.3, linestyle='--')
         else:
-            noise_seq_subset = noise_seq
-            print(f"    噪声点包含 {len(noise_seq)} 个样本，全部可视化")
-        
-        # 在最后一个子图中绘制噪声点
-        noise_ax = axes[n_clusters]
-        for j, series in enumerate(noise_seq_subset):
-            noise_ax.plot(series, alpha=0.6, color='gray', label=f'Noise {j}' if j < 3 else "")  # 用灰色绘制噪声点
-        
-        noise_ax.set_title(f'Noise Points (-1) (前{len(noise_seq_subset)}个数据)', fontsize=12)
-        noise_ax.set_xlabel('时间步 / 序列长度', fontsize=10)
-        noise_ax.set_ylabel('时序数值', fontsize=10)
-        noise_ax.grid(alpha=0.3, linestyle='--')
-    else:
-        # 如果没有噪声点，显示无噪声点信息
-        noise_ax = axes[n_clusters]
-        noise_ax.text(0.5, 0.5, '无噪声点',
-                     horizontalalignment='center', verticalalignment='center',
-                     transform=noise_ax.transAxes, fontsize=12)
-        noise_ax.set_title('噪声点 (-1) - 无数据', fontsize=12)
+            # 如果没有噪声点，显示无噪声点信息
+            noise_ax.text(0.5, 0.5, '无噪声点',
+                         horizontalalignment='center', verticalalignment='center',
+                         transform=noise_ax.transAxes, fontsize=12)
+            noise_ax.set_title('噪声点 (-1) - 无数据', fontsize=12)
 
     # 隐藏多余的子图
     for j in range(total_plots, len(axes)):
@@ -666,10 +737,19 @@ def visualize_cluster_results(
         plt.scatter(tsne_2d[idx, 0], tsne_2d[idx, 1],
                     c=[cluster_colors[cluster_id % 10]], label=f'簇 {cluster_id}',
                     s=70, alpha=0.8, edgecolors='white', linewidth=0.5)
-    # 绘制噪声点
+    
+    # 绘制噪声点，根据visualize_noise决定显示方式
     noise_idx = cluster_labels == -1
-    plt.scatter(tsne_2d[noise_idx, 0], tsne_2d[noise_idx, 1],
-                c='black', marker='x', label='噪声点', s=90, alpha=0.8)
+    if np.sum(noise_idx) > 0 and visualize_noise > 0:
+        if visualize_noise == 2:
+            # visualize_noise=2: 将噪声点作为特殊类别显示（黑色，标记为'噪声点'）
+            plt.scatter(tsne_2d[noise_idx, 0], tsne_2d[noise_idx, 1],
+                        c='black', marker='x', label='噪声点', s=90, alpha=0.8)
+        else:  # visualize_noise=1
+            # visualize_noise=1: 将噪声点作为第 n 个簇显示（与其他簇一样的方式）
+            plt.scatter(tsne_2d[noise_idx, 0], tsne_2d[noise_idx, 1],
+                        c=[cluster_colors[n_clusters % 10]], label=f'簇 {n_clusters}',
+                        s=70, alpha=0.8, edgecolors='white', linewidth=0.5)
 
     plt.title('时序聚类-tSNE降维分布图 (特征矩阵)', fontsize=14, fontweight='bold')
     plt.xlabel('tSNE维度1', fontsize=11)
@@ -695,7 +775,8 @@ def cluster_result_quantification(
         feature_matrix: np.ndarray,
         save_dir: str | None = None,
         col_index: int = 1,
-        visualize: bool = True
+        visualize: bool = True,
+        visualize_noise: int = 2  # 0: 不可视化噪声点, 1: 可视化噪声点为一个簇, 2: 可视化噪声点为x标记
 ) -> tuple[float | None, float | None, float | None]:
     """
     聚类结果量化主入口（整合预处理、指标计算、可视化），完全兼容原接口
@@ -704,6 +785,9 @@ def cluster_result_quantification(
     :param org_data: 原始时序数据（用于簇中心可视化）
     :param feature_matrix: 特征矩阵（用于评分计算和tSNE可视化）
     :param save_dir: 可视化结果保存目录（None则不保存）
+    :param col_index: 要可视化的列索引
+    :param visualize: 是否进行可视化
+    :param visualize_noise: 噪声点可视化模式，0: 不可视化, 1: 作为簇, 2: 作为x标记
     :return: sil_score, db_score, ch_score
     """
     # 1. 数据预处理
@@ -731,7 +815,8 @@ def cluster_result_quantification(
             feature_matrix=feature_matrix,
             org_data=org_data,  # 传入原始时序数据，用于噪声点可视化
             save_dir=save_dir,
-            col_index=col_index
+            col_index=col_index,
+            visualize_noise=visualize_noise
         )
 
     return sil_score, db_score, ch_score
